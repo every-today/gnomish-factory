@@ -2,7 +2,9 @@ package com.github.oinsio.gnomish.adapter.git
 
 import ch.qos.logback.classic.Level
 import com.github.oinsio.gnomish.app.port.git.BranchLocation
+import com.github.oinsio.gnomish.domain.engine.fake.VirtualTimeEquipment
 import com.github.oinsio.gnomish.domain.engine.port.Sleeper
+import com.github.oinsio.gnomish.subprocess.Termination
 import com.github.oinsio.gnomish.testfixtures.logging.LogCaptureSupport
 import java.nio.file.Files
 import java.nio.file.Path
@@ -24,7 +26,7 @@ class TaskBranchLocatorSpec extends Specification implements BareGitRepoFixture 
     Path tempDir
 
     def runner = new GitProcessRunner()
-    def locator = new TaskBranchLocator(runner)
+    def locator = new TaskBranchLocator(runner, VirtualTimeGitRetries.gitInfrastructure())
 
     private Path initBareWithBranch(Path parent, String repoName, String branch, String fileName, String content) {
         def bare = initBareRepo(parent, repoName)
@@ -204,10 +206,27 @@ class TaskBranchLocatorSpec extends Specification implements BareGitRepoFixture 
         (location as BranchLocation.Local).ref() == 'refs/heads/gnomish/PROJ-7-fix-it'
     }
 
+    /**
+     * A git over a clone without the tracking ref, whose origin confirms it carries the branch
+     * (an {@code ls-remote} listing) and whose every fetch exits with {@code fetch}.
+     */
+    private static ScriptedGit originCarries(GitCommandResult fetch) {
+        new ScriptedGit()
+                .answer(['fetch'], fetch)
+                .answer(['ls-remote'], 0, "${'1' * 40}\trefs/heads/gnomish/PROJ\n")
+                .answer(['rev-parse'], 1)
+                .answer(['remote'], 0, 'https://example.invalid/repo.git\n')
+    }
+
+    /** Every fetch refused as an unreachable origin. */
+    private static ScriptedGit fetchRefused() {
+        originCarries(GitCommandResult.of(128, '', 'fatal: unable to access origin\n'))
+    }
+
     /** No-wait budget: the same three attempts and doubling backoff, with the sleeps virtualized. */
-    private TaskBranchLocator instantRetryLocator(GitProcessRunner boundRunner = runner) {
+    private TaskBranchLocator instantRetryLocator(GitRunner boundRunner = runner) {
         new TaskBranchLocator(boundRunner, new GitInfrastructureRetry(
-                        { Duration ignored -> } as Sleeper, GitInfrastructureRetry.DEFAULT_ATTEMPTS, Duration.ofMillis(1)))
+                        VirtualTimeEquipment.waitingOn({ Duration ignored -> } as Sleeper), GitInfrastructureRetry.DEFAULT_ATTEMPTS, Duration.ofMillis(1)))
     }
 
     def "FR6: an unreachable origin is unavailable, never absent — no fresh branch may be forked from it"() {
@@ -226,12 +245,10 @@ class TaskBranchLocatorSpec extends Specification implements BareGitRepoFixture 
 
     def "FR6: a branch origin confirms it carries but the fetch could not deliver is unavailable"() {
         given: 'a git that answers the branch probe but fails every fetch'
-        def gitBinary = dispatchingGit()
-        def clone = initWorkingRepo(tempDir, 'clone-fetch-broken')
-        commit(clone, 'a.txt', 'first')
+        def git = fetchRefused()
 
         when:
-        def location = instantRetryLocator(new GitProcessRunner(gitBinary.toString())).locate(clone, 'PROJ-9')
+        def location = instantRetryLocator(git).locate(tempDir, 'PROJ-9')
 
         then:
         location instanceof BranchLocation.Unavailable
@@ -249,11 +266,10 @@ class TaskBranchLocatorSpec extends Specification implements BareGitRepoFixture 
     //     there, which every reader then resolves against.
     def "FR6: a fetch that exits zero without creating the ref is unavailable, never remote-tracking"() {
         given: 'a git whose fetch succeeds silently while origin confirms it carries the branch'
-        def clone = initWorkingRepo(tempDir, 'clone-lying-fetch')
-        commit(clone, 'a.txt', 'first')
+        def git = originCarries(GitCommandResult.of(0, '', ''))
 
         when:
-        def location = instantRetryLocator(new GitProcessRunner(lyingFetchGit().toString())).locate(clone, 'PROJ-13')
+        def location = instantRetryLocator(git).locate(tempDir, 'PROJ-13')
 
         then: 'the absent ref decides, not the zero exit'
         location instanceof BranchLocation.Unavailable
@@ -262,15 +278,13 @@ class TaskBranchLocatorSpec extends Specification implements BareGitRepoFixture 
 
     def "FR6: the unsettled lookup is re-attempted under the infrastructure budget before giving up"() {
         given:
-        def gitBinary = dispatchingGit()
-        def clone = initWorkingRepo(tempDir, 'clone-retry-count')
-        commit(clone, 'a.txt', 'first')
+        def git = fetchRefused()
 
         when:
-        instantRetryLocator(new GitProcessRunner(gitBinary.toString())).locate(clone, 'PROJ-10')
+        instantRetryLocator(git).locate(tempDir, 'PROJ-10')
 
         then: 'the fetch ran once per attempt of the budget, and no more'
-        Files.readAllLines(tempDir.resolve('fetch-count.txt')).size() == GitInfrastructureRetry.DEFAULT_ATTEMPTS
+        git.calls(['fetch']).size() == GitInfrastructureRetry.DEFAULT_ATTEMPTS
     }
 
     // FR6 of harden-task-branch-contract: "this clone has no origin" is itself the answer of a git
@@ -278,79 +292,23 @@ class TaskBranchLocatorSpec extends Specification implements BareGitRepoFixture 
     //     read whose own silence is then spent as a second vote for absence.
     def "FR6: a fetch cut off on its deadline is unavailable even when the origin read fails too"() {
         given: 'a git that stalls on every network command and denies having an origin at all'
-        def clone = initWorkingRepo(tempDir, 'clone-stalled-fetch')
-        commit(clone, 'a.txt', 'first')
-        def stalling = new GitProcessRunner(stallingNetworkGit().toString(), Duration.ofMillis(500))
-        def oneAttempt = new GitInfrastructureRetry({ Duration ignored -> } as Sleeper, 1, Duration.ofMillis(1))
+        def cutOff = GitCommandResult.of(143, '', '', Termination.TIMED_OUT)
+        def stalling = new ScriptedGit()
+                .answer(['fetch'], cutOff)
+                .answer(['ls-remote'], cutOff)
+                .answer([
+                    'rev-parse',
+                    '--git-common-dir'
+                ], 0, '.git\n')
+                .answer(['rev-parse'], 1)
+                .answer(['remote'], 128)
+        def oneAttempt = new GitInfrastructureRetry(VirtualTimeEquipment.waitingOn({ Duration ignored -> } as Sleeper), 1, Duration.ofMillis(1))
 
         when:
-        def location = new TaskBranchLocator(stalling, oneAttempt).locate(clone, 'PROJ-12')
+        def location = new TaskBranchLocator(stalling, oneAttempt).locate(tempDir, 'PROJ-12')
 
         then: 'the unestablished lookup says so, instead of the absence that forks a duplicate branch'
         location instanceof BranchLocation.Unavailable
         (location as BranchLocation.Unavailable).reason().contains('origin did not answer whether gnomish/PROJ-12')
-    }
-
-    /**
-     * A git whose network commands never return — so the runner ends them on its own deadline —
-     * and whose {@code remote get-url} fails: the combination in which a silenced origin read
-     * would otherwise pass for "this clone is purely local". Every subcommand the locator drives
-     * is answered explicitly: the clone-key resolution, the ref probes (absent) and the origin read
-     * (failed); the spec reads none of their output text.
-     */
-    private Path stallingNetworkGit() {
-        new StallingGit()
-                .stallOn('fetch', 'ls-remote')
-                .answer([
-                    'rev-parse',
-                    '--git-common-dir'
-                ], '.git', 0)
-                .answer('rev-parse', '', 1)
-                .answer('remote', '', 128)
-                .write(tempDir)
-    }
-
-    /**
-     * A git that reports a <em>successful</em> fetch while creating no ref at all, and answers
-     * {@code ls-remote} with the branch: the combination that tells apart "the fetch's exit code"
-     * from "the tracking ref" as the authority on what actually arrived.
-     */
-    private Path lyingFetchGit() {
-        def script = tempDir.resolve('lying-fetch-git.sh')
-        script.toFile().text = """#!/bin/sh
-for a in "\$@"; do
-  case "\$a" in
-    fetch) exit 0;;
-    ls-remote) echo '1111111111111111111111111111111111111111\trefs/heads/gnomish/PROJ'; exit 0;;
-    rev-parse) exit 1;;
-    remote) echo 'https://example.invalid/repo.git'; exit 0;;
-  esac
-done
-exit 1
-"""
-        script.toFile().setExecutable(true)
-        script
-    }
-
-    /**
-     * A git that fails every fetch while answering {@code ls-remote} with a real ref: the one
-     * combination that separates "origin has no such branch" from "this clone could not get it",
-     * and one a real remote cannot be talked into producing on demand.
-     */
-    private Path dispatchingGit() {
-        def script = tempDir.resolve('dispatching-git.sh')
-        script.toFile().text = """#!/bin/sh
-for a in "\$@"; do
-  case "\$a" in
-    fetch) echo x >> '${tempDir.resolve('fetch-count.txt')}'; echo 'fatal: unable to access origin' 1>&2; exit 128;;
-    ls-remote) echo '1111111111111111111111111111111111111111\trefs/heads/gnomish/PROJ'; exit 0;;
-    rev-parse) exit 1;;
-    remote) echo 'https://example.invalid/repo.git'; exit 0;;
-  esac
-done
-exit 1
-"""
-        script.toFile().setExecutable(true)
-        script
     }
 }

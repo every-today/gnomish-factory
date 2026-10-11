@@ -49,14 +49,11 @@ class OriginRemoteSpec extends Specification implements BareGitRepoFixture {
     // The two answers come apart here: `remote get-url` SUCCEEDS but prints nothing. The URL reader
     // must report empty (there is no identity to digest, FR8 of add-serve-sandbox-lifecycle) while
     // the push precondition still says configured — a remote exists, the push is git's to refuse.
-    // Real git cannot be made to print a blank URL for a configured remote, so the runner's own
-    // git-binary seam stands in for it.
+    // Real git cannot be made to print a blank URL for a configured remote, so the runner's port is
+    // scripted for it (design D27 of supervise-daemon-loops-and-embed-dashboard).
     def "a configured origin whose URL reads blank is empty to the URL reader, still configured to the precondition"() {
         given:
-        def blankUrlGit = tempDir.resolve('blank-url-git')
-        blankUrlGit.toFile().text = '#!/bin/sh\necho ""\n'
-        blankUrlGit.toFile().executable = true
-        def blankOrigin = new OriginRemote(new GitProcessRunner(blankUrlGit.toString()))
+        def blankOrigin = new OriginRemote(new ScriptedGit().answer([], 0, '\n'))
 
         expect:
         blankOrigin.url(tempDir) == Optional.empty()

@@ -1,6 +1,9 @@
 package com.github.oinsio.gnomish.adapter.git
 
+import ch.qos.logback.classic.Level
+import com.github.oinsio.gnomish.operatorevent.OperatorEvent
 import com.github.oinsio.gnomish.subprocess.Termination
+import com.github.oinsio.gnomish.testfixtures.logging.LogCaptureSupport
 import java.nio.file.Path
 import java.time.Duration
 import spock.lang.Specification
@@ -18,9 +21,6 @@ import spock.lang.TempDir
  * command itself — and then stalls for far longer than any deadline this spec configures.
  */
 class GitProcessRunnerBoundedNetworkSpec extends Specification implements BareGitRepoFixture {
-
-    /** Long enough that a wall-clock assertion can only pass because the deadline fired. */
-    static final String STALL_SECONDS = '600'
 
     @TempDir
     Path tempDir
@@ -70,14 +70,7 @@ class GitProcessRunnerBoundedNetworkSpec extends Specification implements BareGi
 
     def "FR3, NFR-S2: the partial stderr of a killed network command is still scrubbed"() {
         given: 'a git that prints a PAT-bearing remote URL to stderr and then never exits'
-        def fakeGit = tempDir.resolve('leaky-git')
-        fakeGit.toFile().text = """#!/bin/sh
-while [ "\$1" = "-c" ]; do shift 2; done
-if [ "\$1" = "rev-parse" ]; then echo ".git"; exit 0; fi
-echo "fatal: could not read Password for 'https://ghp_FAKETOKEN1234567890@github.com'" >&2
-sleep ${STALL_SECONDS}
-"""
-        fakeGit.toFile().executable = true
+        def fakeGit = StallingGit.git('leak-credentials-then-stall')
 
         when:
         def result = new GitProcessRunner(fakeGit.toString(), Duration.ofSeconds(2)).run(tempDir, 'push')
@@ -88,13 +81,31 @@ sleep ${STALL_SECONDS}
         result.stderr().forParsing().contains("could not read Password for 'https://***@github.com'")
     }
 
+    // NFR-O1 of bound-subprocess-commands: only the runner knows both numbers, so the WARN that
+    //     carries them is the runner's (moved here from PushTerminationLoggingSpec, whose push points
+    //     now run over the runner's port — design D27 of supervise-daemon-loops-and-embed-dashboard).
+    def "NFR-O1: the runner names the command class, the elapsed time and the configured deadline"() {
+        when:
+        def events = LogCaptureSupport.capture(GitProcessRunner, Level.INFO) {
+            new GitProcessRunner(stallingGit().toString(), Duration.ofSeconds(2)).run(tempDir, 'push', 'origin', 'HEAD')
+        }
+
+        then:
+        def warnings = events.findAll { it.level == Level.WARN }
+        warnings.size() == 1
+        warnings[0].formattedMessage.startsWith(OperatorEvent.GIT_NETWORK_COMMAND_TIMED_OUT.head() + 'git network command timed out')
+        warnings[0].formattedMessage.contains('subcommand=push')
+        warnings[0].formattedMessage.contains('deadline=PT2S')
+
+        and: 'elapsed is the time this command actually ran — the deadline, plus its kill'
+        def elapsed = Duration.parse(
+                (warnings[0].formattedMessage =~ /elapsed=(PT[^,]+)/)[0][1] as String)
+        elapsed >= Duration.ofSeconds(2)
+        elapsed <Duration.ofSeconds(30)
+    }
+
     /** Stalls on the network four; every local command takes a second and then answers. */
     private Path stallingGit() {
-        new StallingGit()
-                .stallOn('push', 'fetch', 'ls-remote', 'clone')
-                .answer('rev-parse', '.git', 0)
-                .answer('status', 'local done', 0)
-                .localDelay(Duration.ofSeconds(1))
-                .write(tempDir)
+        StallingGit.git('bounded-network')
     }
 }

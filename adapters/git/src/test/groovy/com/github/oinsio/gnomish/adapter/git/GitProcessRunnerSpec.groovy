@@ -1,5 +1,7 @@
 package com.github.oinsio.gnomish.adapter.git
 
+import com.github.oinsio.gnomish.testfixtures.standin.StandIn
+import com.github.oinsio.gnomish.testfixtures.standin.StandInLog
 import java.nio.file.Path
 import spock.lang.Specification
 import spock.lang.TempDir
@@ -109,13 +111,7 @@ class GitProcessRunnerSpec extends Specification implements BareGitRepoFixture {
     // does have a controlling terminal, would block on the prompt instead of failing.
     def "NFR-S2: git stderr carrying a remote URL's userinfo is scrubbed before any caller sees it"() {
         given: 'a git stand-in whose stderr echoes a PAT-in-URL exactly as git 2.55 does'
-        def fakeGit = tempDir.resolve('fake-git')
-        fakeGit.toFile().text = '''#!/bin/sh
-echo "https://ghp_FAKETOKEN1234567890@github.com/acme/widgets.git"
-echo "fatal: could not read Password for 'https://ghp_FAKETOKEN1234567890@github.com': Device not configured" >&2
-exit 128
-'''
-        fakeGit.toFile().executable = true
+        def fakeGit = StandIn.git('leak-credentials')
 
         when:
         def result = new GitProcessRunner(fakeGit.toString()).run(tempDir, 'ls-remote', 'origin')
@@ -252,6 +248,22 @@ exit 128
     // Following that established precedent, this spec invokes the private static canonicalize
     // directly via reflection with a path that does not exist, forcing the IOException branch, and
     // asserts the fallback value it returns — not null — killing the NullReturnValsMutator mutant.
+    // D8: a mutating command whose cwd is no repository cannot resolve a clone; the lock is keyed
+    //     by the directory itself, and git's own refusal comes back as a result. Pinned here since
+    //     design D27 of supervise-daemon-loops-and-embed-dashboard moved the specs above the runner
+    //     — which used to reach this path through stand-ins — onto the runner's port.
+    def "D8: a mutating command outside any repository runs under the directory's own key and returns git's refusal"() {
+        given: 'a directory that is no git repository'
+        def notARepo = java.nio.file.Files.createDirectories(tempDir.resolve('not-a-repo'))
+
+        when:
+        def result = runner.run(notARepo, 'push', 'origin', 'main')
+
+        then:
+        result.exitCode() != 0
+        result.stderr().contains('not a git repository')
+    }
+
     def "D8: canonicalize falls back to the normalized absolute path (never null) when the real path cannot be resolved"() {
         given:
         def method = GitProcessRunner.getDeclaredMethod('canonicalize', Path)
@@ -279,17 +291,20 @@ exit 128
     // password. Driven through the runner's own git-binary seam because the property under test is
     // what the child process's environment holds, which only the child can report.
     def "NFR-R2: git runs with interactive credential prompting switched off"() {
-        given: 'a git stand-in that reports the prompting-related variables it was handed'
-        def fakeGit = tempDir.resolve('env-reporting-git')
-        fakeGit.toFile().text = '''#!/bin/sh
-echo "prompt=[${GIT_TERMINAL_PROMPT-unset}] askpass=[${GIT_ASKPASS-unset}] ssh=[${SSH_ASKPASS-unset}]"
-'''
-        fakeGit.toFile().executable = true
+        given: 'a git stand-in that records the prompting-related variables it was handed'
+        def fakeGit = StandIn.recording(tempDir, 'record-prompting')
 
         when:
-        def result = new GitProcessRunner(fakeGit.toString()).run(tempDir, 'ls-remote', 'origin')
+        new GitProcessRunner(fakeGit.toString()).run(tempDir, 'ls-remote', 'origin')
 
         then:
-        result.stdout().forParsing().trim() == 'prompt=[0] askpass=[] ssh=[]'
+        StandInLog.blocks(fakeGit)*.subMap([
+            'GIT_TERMINAL_PROMPT',
+            'GIT_ASKPASS',
+            'SSH_ASKPASS'
+        ]) ==
+        [
+            [GIT_TERMINAL_PROMPT: '[0]', GIT_ASKPASS: '[]', SSH_ASKPASS: '[]']
+        ]
     }
 }

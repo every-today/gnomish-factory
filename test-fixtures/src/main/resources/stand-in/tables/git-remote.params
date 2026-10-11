@@ -1,0 +1,3 @@
+# Git stand-ins playing a remote that lies, refuses or diverges (TaskBranchLocatorSpec, ReplicaPairReconcilerSpec).
+# Grammar: the header of ../stand-in.sh. One section per preset; StandIn makes its link.
+

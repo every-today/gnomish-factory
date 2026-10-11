@@ -48,11 +48,7 @@ final class FirstPush {
     private final GitInfrastructureRetry retry;
     private final RepeatSuppressor suppressor;
 
-    FirstPush(GitProcessRunner runner) {
-        this(runner, GitInfrastructureRetry.system(), RepeatSuppressor.system());
-    }
-
-    FirstPush(GitProcessRunner runner, GitInfrastructureRetry retry, RepeatSuppressor suppressor) {
+    FirstPush(GitRunner runner, GitInfrastructureRetry retry, RepeatSuppressor suppressor) {
         this.origin = new OriginRemote(runner);
         this.push = new RefspecPush(runner);
         this.localTip = new LocalBranchTip(runner);

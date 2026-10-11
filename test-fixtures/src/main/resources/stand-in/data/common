@@ -1,0 +1,8 @@
+# Answers many scenarios share: the clone key and the origin URL.
+# One section per answer: its lines up to the blank line that separates it from the next one.
+
+[git-dir]
+.git
+
+[url]
+https://example.invalid/repo.git

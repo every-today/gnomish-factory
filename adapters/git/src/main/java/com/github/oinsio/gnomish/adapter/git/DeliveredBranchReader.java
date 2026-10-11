@@ -46,12 +46,17 @@ public final class DeliveredBranchReader {
     private static final String TASK_JSON_PATH = EnvelopePaths.TASK_JSON_PATH;
     private static final String STATE_JSON_PATH = EnvelopePaths.STATE_JSON_PATH;
 
-    private final GitProcessRunner runner;
+    private final GitRunner runner;
     private final TaskBranchLocator locator;
 
-    public DeliveredBranchReader(GitProcessRunner runner) {
+    /**
+     * @param runner the git subprocess seam; never null
+     * @param retry the infrastructure budget the branch lookup is re-attempted under, the
+     *     composition root's own (FR18 of supervise-daemon-loops-and-embed-dashboard); never null
+     */
+    public DeliveredBranchReader(GitRunner runner, GitInfrastructureRetry retry) {
         this.runner = runner;
-        this.locator = new TaskBranchLocator(runner);
+        this.locator = new TaskBranchLocator(runner, retry);
     }
 
     /**

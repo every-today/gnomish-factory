@@ -45,25 +45,26 @@ class RefspecPushSpec extends Specification implements BareGitRepoFixture {
 
     // Design D2: the refspec is EXPLICIT — `origin <branch>:<branch>`, never a bare branch name
     // leaning on git's implicit refspec inference (which `push.default` can redirect) and never a
-    // forced `+`-prefixed one. Asserted over the argv itself through the runner's git-binary seam:
-    // pushing successfully proves the command works, not that it is spelled this way. The runner's
-    // own stall-detection options precede it, a push being a network command (FR4 of
-    // bound-subprocess-commands); everything after them is this class's.
+    // forced `+`-prefixed one. Asserted over the argv itself through the runner's port (design D27
+    // of supervise-daemon-loops-and-embed-dashboard): pushing successfully proves the command works,
+    // not that it is spelled this way. The runner adds its own stall-detection options in front, a
+    // push being a network command (FR4 of bound-subprocess-commands), pinned by its own specs; the
+    // argv handed to it is this class's.
     def "the command is the exact explicit refspec, with no other argument"() {
-        given: 'a git stand-in that reports the argv it was handed'
-        def fakeGit = tempDir.resolve('argv-reporting-git')
-        fakeGit.toFile().text = '#!/bin/sh\necho "$@"\n'
-        fakeGit.toFile().executable = true
+        given: 'a git whose push succeeds'
+        def git = new ScriptedGit().answer(['push'], 0)
 
         when:
-        def result = new RefspecPush(new GitProcessRunner(fakeGit.toString())).push(clone, BRANCH)
+        new RefspecPush(git).push(clone, BRANCH)
 
-        then:
-        result.stdout().forParsing().trim() == (stallDetectionArgv() + [
-            'push',
-            'origin',
-            "${BRANCH}:${BRANCH}"
-        ]).join(' ')
+        then: 'one invocation, exactly the explicit refspec'
+        git.calls()*.argv == [
+            [
+                'push',
+                'origin',
+                "${BRANCH}:${BRANCH}".toString()
+            ]
+        ]
     }
 
     // The production shape (FR1): a host-mode lifecycle push runs from the CLONE, whose HEAD is on

@@ -1,0 +1,32 @@
+# What stand-ins print on stderr: refusals and failures, each exactly as the tool under test prints it.
+# One section per answer: its lines up to the blank line that separates it from the next one.
+
+[bad-revision]
+fatal: bad revision
+
+[boom]
+boom
+
+[docker-daemon-down]
+Cannot connect to the Docker daemon at unix:///var/run/docker.sock
+
+[git-broken-install]
+git: broken install
+
+[no-further-push]
+no further push may happen
+
+[password-prompt-device]
+fatal: could not read Password for 'https://ghp_FAKETOKEN1234567890@github.com': Device not configured
+
+[password-prompt-leak]
+fatal: could not read Password for 'https://ghp_FAKETOKEN1234567890@github.com'
+
+[stand-in-refuses]
+fatal: stand-in git refuses
+
+[unable-to-access]
+fatal: unable to access origin
+
+[warn]
+warn

@@ -10,11 +10,9 @@ import com.github.oinsio.gnomish.app.port.tracker.Tracker
 import com.github.oinsio.gnomish.app.port.tracker.TrackerTaskState
 import com.github.oinsio.gnomish.app.project.RegisteredClone
 import com.github.oinsio.gnomish.app.serve.SandboxLifecyclePass
+import com.github.oinsio.gnomish.domain.engine.fake.VirtualTimeEquipment
 import java.nio.file.Files
 import java.nio.file.Path
-import java.time.Clock
-import java.time.Instant
-import java.time.ZoneOffset
 import spock.lang.Specification
 import spock.lang.TempDir
 
@@ -49,7 +47,7 @@ abstract class TakeLifecycleReadyToDeliveredSpecBase extends Specification imple
 
     protected static final TaskRef REF = new TaskRef('PROJ-1')
 
-    private static final String JUDGE_MODEL = 'claude-fake-judge-1'
+    private static final String JUDGE_MODEL = FakeAgentSupport.JUDGE_MODEL
 
     @TempDir
     Path tempDir
@@ -117,11 +115,11 @@ tracker:
         // refreshes its base against a real 'origin' remote, never the clone's local HEAD.
         addOrigin(projectDir, tempDir)
         registeredClone = RegisteredCloneFixture.registered(tempDir.resolve('home'), projectDir)
-        argvCapture = tempDir.resolve('fake-agent-argv.txt')
+        argvCapture = tempDir.resolve('plain-round.log')
     }
 
     private FactoryProperties fakeAgent() {
-        FakeAgentSupport.propertiesCapturingArgv('plain-round', JUDGE_MODEL, 'judge-verdict-pass', argvCapture)
+        FakeAgentSupport.propertiesCapturingArgv('plain-round', argvCapture)
     }
 
     protected static boolean carriesPair(List<String> argv, String flag, String value) {
@@ -130,13 +128,12 @@ tracker:
 
     private TakeCommand newCommand(FactoryProperties factoryProperties) {
         TakeCommands.of(
-                newAssembly(factoryProperties),
+                newAssembly(factoryProperties, TakeCommands.slotTime()),
                 TaskGitFixture.real(),
                 registeredClone,
                 'taskId',
                 factoryProperties,
-                Clock.fixed(Instant.parse('2026-01-01T00:00:00Z'), ZoneOffset.UTC),
-                new TrackerWiring([github: trackerFactory], MapSecretsProvider.NONE, TrackerValidatorStub.acceptingGithubSource()), SandboxLifecyclePass.NONE, ContainerTakeSupport.hostOnly())
+                new TrackerWiring([github: trackerFactory], MapSecretsProvider.NONE, TrackerValidatorStub.acceptingGithubSource(), VirtualTimeEquipment.create()), SandboxLifecyclePass.NONE, ContainerTakeSupportFixture.hostOnly())
     }
 
     def "ready -> claim -> work -> delivered with a final report, told end to end by the tracker's own thread"() {
