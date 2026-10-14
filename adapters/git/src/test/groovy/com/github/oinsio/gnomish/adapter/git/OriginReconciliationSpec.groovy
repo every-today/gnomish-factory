@@ -42,6 +42,9 @@ class OriginReconciliationSpec extends Specification implements BareGitRepoFixtu
     private String commitOnBranch(String content) {
         Files.writeString(clone.resolve('a.txt'), content)
         commitAll(clone, content)
+        // Each local commit here stands for a closing commit, registered as the closing push does
+        //     (FR13 of tighten-spec-contract); the catch-up delivers the register with the branch.
+        gitOutput(clone, 'update-ref', "refs/gnomish-factory/${TASK_ID}", 'HEAD')
         gitOutput(clone, 'rev-parse', 'HEAD')
     }
 
@@ -58,6 +61,7 @@ class OriginReconciliationSpec extends Specification implements BareGitRepoFixtu
         LogCaptureSupport.capture(OriginReconciliation, Level.DEBUG, emit)
     }
 
+    // Scenario: git/git-task-persistence / A catch-up push says origin was behind
     def "an origin missing the branch entirely is caught up"() {
         given:
         def local = commitOnBranch('one')
@@ -69,6 +73,9 @@ class OriginReconciliationSpec extends Specification implements BareGitRepoFixtu
 
         then:
         originTip() == Optional.of(local)
+
+        and: 'the catch-up is a closing push: the register landed with the branch (FR13 of tighten-spec-contract)'
+        gitOutput(origin, 'rev-parse', "refs/gnomish-factory/${TASK_ID}") == local
 
         and: 'the catch-up is visible to a diagnosis, and silent on the operator plane'
         // FR12 of harden-logging-observability: the intention and the outcome of one push are
@@ -92,6 +99,7 @@ class OriginReconciliationSpec extends Specification implements BareGitRepoFixtu
         originTip() == Optional.of(local)
     }
 
+    // Scenario: git/git-task-persistence / Up-to-date origin costs one read
     def "an up-to-date origin costs one refs read and no push"() {
         given:
         def local = commitOnBranch('one')
@@ -115,6 +123,8 @@ class OriginReconciliationSpec extends Specification implements BareGitRepoFixtu
         events.isEmpty()
     }
 
+    // Scenario: git/git-task-persistence / Reconciliation never blocks the run
+    // Scenario: git/git-task-persistence / A failed catch-up push degrades to a warning
     def "an unreachable origin degrades to one WARN without throwing"() {
         given:
         def local = commitOnBranch('one')
@@ -160,6 +170,7 @@ class OriginReconciliationSpec extends Specification implements BareGitRepoFixtu
         warnings[0].formattedMessage.startsWith(OperatorEvent.ORIGIN_RECONCILIATION_SKIPPED.head() + 'origin reconciliation skipped:')
     }
 
+    // Scenario: git/git-task-persistence / No origin remote makes the check a no-op
     def "a clone with no origin is a silent no-op"() {
         given:
         def local = initWorkingRepo(tempDir, 'local')

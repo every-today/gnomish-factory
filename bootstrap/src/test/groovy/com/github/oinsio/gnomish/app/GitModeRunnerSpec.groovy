@@ -70,6 +70,7 @@ class GitModeRunnerSpec extends Specification implements BareGitRepoFixture, App
     // FR6, FR7, UX1: the banner prints before the pipeline runs, naming the deterministic branch
     // and worktree path. printBanner writes directly to System.out (the process's own console,
     // not the injected dialog console), so this spec redirects System.out itself.
+    // Scenario: git/git-task-persistence / The worktree path is shown to the operator
     def "run() prints the branch and worktree banner before the pipeline runs"() {
         given:
         def originalOut = System.out
@@ -192,6 +193,8 @@ class GitModeRunnerSpec extends Specification implements BareGitRepoFixture, App
     // FR6, FR8, task 4.7: a broken durability guarantee (round-boundary violation, design D12) is
     // recorded as an Aborted outcome through GitTaskRepository, and the worktree is kept
     // unconditionally for forensics (design D6) rather than removed.
+    // Scenario: git/git-task-persistence / A boundary violation keeps its evidence
+    // Scenario: git/git-task-persistence / History rewrite aborts
     def "run() records an Aborted outcome and keeps the worktree when the round-boundary protocol is violated"() {
         given: 'the deterministic worktree path is pre-registered on the wrong branch — a stand-in'
         and: 'for a gnome that checked out another branch, which GitAttemptPersistence must catch'
@@ -209,9 +212,10 @@ class GitModeRunnerSpec extends Specification implements BareGitRepoFixture, App
         def ex = thrown(AbortedException)
         ex.outcome() != null
 
-        and: 'the outcome is durably recorded in the worktree HEAD (GitTaskRepository commits wherever'
-        and: 'the worktree currently is, unlike the round-boundary check that caused this Aborted)'
-        def taskJson = gitOutput(worktree, 'show', 'HEAD:.gnomish-task/task.json')
+        and: 'the outcome is durably recorded on the task branch, with its register — the closing commit'
+        and: 'lands there whatever branch the worktree was left on (design D13 of tighten-spec-contract)'
+        def taskJson = gitOutput(cloneDir, 'show', 'gnomish/PROJ-6:.gnomish-task/task.json')
+        gitOutput(cloneDir, 'rev-parse', 'refs/gnomish-factory/PROJ-6') == gitOutput(cloneDir, 'rev-parse', 'gnomish/PROJ-6')
         taskJson.contains('"aborted"')
 
         and: 'the worktree is kept, unconditionally, for forensics'

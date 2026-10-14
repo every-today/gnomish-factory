@@ -248,7 +248,28 @@ public enum OperatorEvent {
     // dashboard final render (supervise-daemon-loops-and-embed-dashboard, design D9, NFR-R1): the
     // render on serve's stop path failed; swallowed so the teardown after it still runs, and the
     // page keeps its last render.
-    DASHBOARD_FINAL_RENDER_FAILED("GF157");
+    DASHBOARD_FINAL_RENDER_FAILED("GF157"),
+    // claim-time task-branch lookup (tighten-spec-contract, finding F6): origin never answered
+    // whether the claimed task's branch exists, so the claim is released plain, outside the abort
+    // accounting, as a base-refresh outage is (FR9 of add-base-ref-resolution) — and the release
+    // write itself may fail.
+    TASK_BRANCH_LOOKUP_UNAVAILABLE("GF158"),
+    TASK_BRANCH_LOOKUP_RELEASE_FAILED("GF159"),
+    // GF160 is retired (tighten-spec-contract, design D13 as amended 2026-10-13): the register no
+    // longer moves in a step of its own that can fail after its closing commit landed — the commit
+    // and the register land in one ref transaction, whose refusal is the closing writer's own
+    // failure. A retired code stays retired — the gap is not filled.
+    // factory register (tighten-spec-contract, design D13): a best-effort closing push of a salvage
+    // or a sandboxed round failed.
+    CLOSING_PUSH_FAILED("GF161"),
+    // factory clone ref backend (tighten-spec-contract, design D13 as amended 2026-10-13): the clone
+    // a run starts on is not on the reftable ref backend, so a ref transaction moving the task
+    // branch and its register would not be atomic on disk; the run is refused before it writes.
+    FACTORY_CLONE_REF_FORMAT_REFUSED("GF162"),
+    // sandbox image git floor (tighten-spec-contract, design D13 as amended 2026-10-13): the image
+    // a box is about to be seeded on carries a git below the floor (or none), so its seed clone
+    // could not read the reftable factory clone; the box is refused before any object exists.
+    BOX_GIT_VERSION_REFUSED("GF163");
 
     private final String code;
     private final String head;

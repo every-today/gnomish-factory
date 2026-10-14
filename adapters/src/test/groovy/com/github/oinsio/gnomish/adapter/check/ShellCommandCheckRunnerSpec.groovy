@@ -5,8 +5,8 @@ import com.github.oinsio.gnomish.domain.engine.Verdict
 import com.github.oinsio.gnomish.domain.engine.fake.VirtualClock
 import com.github.oinsio.gnomish.domain.engine.port.Workspace
 import com.github.oinsio.gnomish.operatorevent.OperatorEvent
-import com.github.oinsio.gnomish.sandbox.ChildEnvAllowlist
 import com.github.oinsio.gnomish.sandbox.environment.HostTaskExecutionEnvironment
+import com.github.oinsio.gnomish.testfixtures.TestChildEnvironment
 import com.github.oinsio.gnomish.untrustedtext.Provenance
 import java.nio.file.Files
 import java.nio.file.Path
@@ -40,6 +40,7 @@ class ShellCommandCheckRunnerSpec extends Specification implements ShellCommandC
         verdict instanceof Verdict.Pass
     }
 
+    // Scenario: cli/manual-run / Red check carries feedback
     def "run(...) maps a non-zero exit other than 126/127 to Fail with one synthetic finding carrying the output tail"() {
         given: 'a command that exits 1 and writes a distinctive tail without a findings file'
         def check = command('echo boom-output; exit 1')
@@ -72,6 +73,7 @@ class ShellCommandCheckRunnerSpec extends Specification implements ShellCommandC
         cannotVerify.reason().provenance() == Provenance.FACTORY
     }
 
+    // Scenario: cli/manual-run / Missing binary is infrastructure
     def "run(...) maps exit 127 to CannotVerify"() {
         given: 'a command that prints a distinctive tail before exiting 127'
         def check = command('echo tail-127-output; exit 127')
@@ -153,6 +155,7 @@ class ShellCommandCheckRunnerSpec extends Specification implements ShellCommandC
         warning.throwableProxy.className == CheckEnvironmentUnavailableException.name
     }
 
+    // Scenario: cli/manual-run / Host findings files stay outside the worktree
     def "GNOMISH_FINDINGS_FILE is passed as a path outside the workspace root"() {
         given: 'a command that echoes the env var so the test can inspect its value, run through run() so the runner creates the temp path itself'
         def check = command('echo $GNOMISH_FINDINGS_FILE; exit 1')
@@ -168,6 +171,7 @@ class ShellCommandCheckRunnerSpec extends Specification implements ShellCommandC
         !path.startsWith(tempDir.toRealPath().toString())
     }
 
+    // Scenario: cli/manual-run / Structured findings win
     def "structured findings win: exit 1 with two valid findings written replaces the synthetic finding"() {
         given: 'a command that exits 1 and writes two valid findings to the findings file'
         def check = command('''cat > "$GNOMISH_FINDINGS_FILE" <<'EOF'
@@ -188,6 +192,8 @@ exit 1''')
         fail.findings()[1].details() == 'more info'
     }
 
+    // Scenario: cli/manual-run / Broken reporter cannot mask a red check
+    // Scenario: cli/manual-run / A malformed findings file is logged
     def "broken reporter cannot mask a red check: malformed findings file degrades to the synthetic finding, verdict stays Fail"() {
         given: 'a command that exits 1 and writes unparseable JSON to the findings file'
         def check = command('echo boom-output; echo "not valid json {{{" > "$GNOMISH_FINDINGS_FILE"; exit 1')
@@ -254,6 +260,7 @@ exit 1''')
 
     // FR12 of harden-logging-observability: a check that writes findings unconditionally is its
     //     author's habit, not a degradation of this run — noted at DEBUG, not warned about.
+    // Scenario: cli/manual-run / A findings file on a green check is ignored
     def "a findings file with content on exit 0 is ignored - verdict stays Pass, and it is noted"() {
         given: 'a command that exits 0 but still writes findings-shaped content'
         def check = command('''cat > "$GNOMISH_FINDINGS_FILE" <<'EOF'
@@ -320,9 +327,10 @@ exit 0''')
     // exit-1 synthetic finding's output tail (the runner exposes no env otherwise) and proven
     // against real, always-present base vars (HOME/USER): HOME is in the host base set, so its
     // absence can only come from the credential exclusion.
+    // Scenario: cli/manual-run / No factory variable leaks into a check
     def "FR11: withChildEnv excludes the declared credential var from a check's environment"() {
         given: 'an allowlist declaring HOME a credential and a check that reports HOME and USER, then exits 1'
-        def credentialAwareRunner = runner.withChildEnv(ChildEnvAllowlist.of([], ['HOME']))
+        def credentialAwareRunner = runner.withChildEnv(TestChildEnvironment.hostAllowlist([], ['HOME']))
         def check = command('if [ -n "${HOME:-}" ]; then echo HOME=present; else echo HOME=absent; fi; '
                 + 'if [ -n "${USER:-}" ]; then echo USER=present; else echo USER=absent; fi; exit 1')
 
@@ -337,12 +345,14 @@ exit 0''')
     }
 
     // FR9 of add-sandbox-core: the base set reaches a check with no tracker and no passthrough.
+    //     NFR-S3 of tighten-spec-contract: its values resolve through the run's allowlist (the
+    //     secrets port, in production; the test JVM's environment here), which the root always binds
     def "FR9: with no tracker configured a base variable still reaches the check"() {
-        given: 'the default runner (empty allowlist) and a check reporting HOME, then exiting 1'
+        given: 'a runner over an allowlist with no passthrough and no credential, and a check reporting HOME, then exiting 1'
         def check = command('if [ -n "${HOME:-}" ]; then echo HOME=present; else echo HOME=absent; fi; exit 1')
 
         when:
-        def verdict = runner.run(check, workspace())
+        def verdict = runner.withChildEnv(TestChildEnvironment.hostAllowlist()).run(check, workspace())
 
         then:
         verdict instanceof Verdict.Fail
@@ -352,6 +362,9 @@ exit 0''')
     // FR9, M3 of add-sandbox-core (task 7.2): a check's process environment holds ONLY the
     // allowlisted variables — whatever the factory JVM environment holds, nothing outside the host
     // base set plus the factory-set findings variable (plus the shell's own names) leaks in.
+    // Scenario: sandbox/execution-environment / Typical host project needs no env configuration
+    // Scenario: cli/manual-run / No factory variable leaks into a check
+    // Scenario: cli/manual-run / A check inherits no factory variable implicitly
     def "M3: no factory environment variable outside the allowlist leaks into a check"() {
         given: 'a check that dumps every environment variable name it sees, then exits 1'
         def check = command('env | cut -d= -f1; exit 1')
@@ -369,7 +382,9 @@ exit 0''')
         ] as Set
 
         when:
-        def verdict = runner.run(check, workspace())
+        // The root's allowlist shape (no passthrough, no credential) over the test JVM's real
+        // environment, so the base set is really consulted (NFR-S3 of tighten-spec-contract).
+        def verdict = runner.withChildEnv(TestChildEnvironment.hostAllowlist()).run(check, workspace())
 
         then: 'every observed name is allowlisted or shell-internal'
         verdict instanceof Verdict.Fail

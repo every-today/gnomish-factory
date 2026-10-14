@@ -43,6 +43,7 @@ implements UsageHistoryFixture, FailingSubcommandGitFixture {
         setupUsageHistoryFixture()
     }
 
+    // Scenario: cli/task-inspection / Service commits are not rounds
     def "FR14: service commits are not rounds — a salvage commit and a cleanup commit produce no usage rows"() {
         given:
         taskRepository().createTask(new TaskContext('PROJ-3', UntrustedText.tracker('T'), UntrustedText.tracker('B'), []), TaskStart.commit(cloneDir, 'HEAD'), TaskStart.pin('HEAD', BaseRule.LOCAL_HEAD), TaskState.atStageStart('implement'))
@@ -81,6 +82,8 @@ implements UsageHistoryFixture, FailingSubcommandGitFixture {
         stateJson.toFile().text = stateJson.toFile().text + ' '
         runner.run(worktree, 'add', '-A')
         runner.run(worktree, '-c', 'user.email=a@b.c', '-c', 'user.name=a', 'commit', '-m', 'no-op re-commit')
+        // A factory rewrite of state.json, so registered as its closing push would (design D13).
+        registerTip(cloneDir, 'PROJ-6')
 
         when:
         def result = (walker.walk(cloneDir, 'PROJ-6') as UsageHistoryResult.Found)

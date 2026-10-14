@@ -73,7 +73,7 @@ class TakeFreshClaimSpec extends Specification implements RunChainFakes {
         def store = Stub(TaskStoreGit) {
             taskRepository(_) >> lifecycleStore
             attemptPersistence(_, _) >> new InMemoryAttemptPersistence()
-            readTaskRecord(_) >> Optional.of(freshRecord())
+            readTaskRecord(_, _) >> Optional.of(freshRecord())
         }
         tracker.fetchTask(_) >> heldByUs()
         def attached = []
@@ -104,7 +104,7 @@ class TakeFreshClaimSpec extends Specification implements RunChainFakes {
             taskRepository(_) >> lifecycleStore
             attemptPersistence(_, _) >> new InMemoryAttemptPersistence()
             // Scripted, not defaulted: the port returns a record, which Spock cannot invent.
-            readTaskRecord(_) >> Optional.of(freshRecord())
+            readTaskRecord(_, _) >> Optional.of(freshRecord())
         }
         def executor = new ScriptedExecutor([completedRound()])
         def definition = completingPipeline()
@@ -120,11 +120,11 @@ class TakeFreshClaimSpec extends Specification implements RunChainFakes {
                         assemblyRunning(executor), git, tracker, registeredClone)).claim(
                 takeOrder(readyTask(), tracker, runOrder(definition, cloneDir)))
 
+        then: 'the clone is checked (its ref backend inside harden) before anything is written to it (design D13 of tighten-spec-contract, as amended 2026-10-13)'
+        1 * branches.harden(cloneDir)
+
         then: 'run-start hygiene runs before anything is created (FR17, design D11)'
         1 * worktrees.pruneWorktrees(cloneDir)
-
-        then:
-        1 * branches.harden(cloneDir)
 
         then: 'the branch is created once from the trusted-tier default branch, then the run reaches its terminal boundary'
         1 * lifecycleStore.createTask({
@@ -153,7 +153,7 @@ class TakeFreshClaimSpec extends Specification implements RunChainFakes {
         def store = Stub(TaskStoreGit) {
             taskRepository(_) >> Mock(TaskLifecycleStore)
             attemptPersistence(_, _) >> new InMemoryAttemptPersistence()
-            readTaskRecord(_) >> Optional.of(freshRecord())
+            readTaskRecord(_, _) >> Optional.of(freshRecord())
         }
         def executor = new ScriptedExecutor([completedRound()])
         tracker.fetchTask(_) >> heldByUs()
@@ -181,7 +181,7 @@ class TakeFreshClaimSpec extends Specification implements RunChainFakes {
             taskRepository(_) >> lifecycleStore
             attemptPersistence(_, _) >> new InMemoryAttemptPersistence()
             // Scripted, not defaulted: the port returns a record, which Spock cannot invent.
-            readTaskRecord(_) >> Optional.of(freshRecord())
+            readTaskRecord(_, _) >> Optional.of(freshRecord())
         }
 
         and:
@@ -214,7 +214,7 @@ class TakeFreshClaimSpec extends Specification implements RunChainFakes {
         def store = Stub(TaskStoreGit) {
             taskRepository(_) >> Mock(TaskLifecycleStore)
             attemptPersistence(_, _) >> new InMemoryAttemptPersistence()
-            readTaskRecord(_) >> Optional.empty()
+            readTaskRecord(_, _) >> Optional.empty()
         }
         tracker.fetchTask(_) >> heldByUs()
         def git = new TaskGit(
@@ -236,6 +236,8 @@ class TakeFreshClaimSpec extends Specification implements RunChainFakes {
     // read from ITS law binding — an invalid load there parks the task instead of creating
     // anything, the same way TaskTierLawSpec proves for TaskTierLaw.bind directly, but exercised
     // here through the fresh-claim call site that has to route that outcome (TakeFreshClaim.claimAt).
+    // Scenario: tracker/tracker-take / A task-tier law load error parks the task
+    // Scenario: serve/factory-serve / A broken task base is parked, never released
     def "parks the task when the resolved base's own law fails to load, creating nothing"() {
         given:
         def tracker = Mock(Tracker)

@@ -48,6 +48,15 @@ and each clone keeps its own worktrees. Running a command in an unregistered
 directory stops with the `gnomish project add … --dir=…` line to paste; a
 directory *inside* a registered clone stops naming the clone to use instead.
 
+Make every clone on git's **reftable** ref backend: `git clone --ref-format=reftable
+<origin-url> <dir>`. The factory moves a task branch and its register in one ref
+transaction, and only reftable writes that transaction atomically on disk. A run on a
+clone with the default `files` backend stops before it writes anything, with a `[GF162]`
+line naming the clone; the remedy is a fresh clone made that way and registered with
+`gnomish project add` — push any branch that exists only in the old clone first — or,
+for a clone with no worktrees, git's own in-place `git refs migrate --ref-format=reftable`
+(the factory migrates nothing itself; git refuses the migration while worktrees exist).
+
 A sample project file, `~/.gnomish/projects/widgets/project.yaml`:
 
 ```yaml

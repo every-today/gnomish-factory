@@ -60,8 +60,8 @@ class TakeFenceScopeSpec extends Specification implements RunChainFakes {
         worktrees.salvage(_) >> Stub(WorktreeSalvager)
         store.taskRepository(_) >> lifecycleStore
         store.attemptPersistence(_, _) >> { journal }
-        store.readRecordedState(_) >> Optional.of(TaskState.atStageStart('build'))
-        store.readTaskRecord(_) >> Optional.of(recordWith(null, null, false))
+        store.readRecordedState(_, _) >> Optional.of(TaskState.atStageStart('build'))
+        store.readTaskRecord(_, _) >> Optional.of(recordWith(null, null, false))
         tracker.fetchTask(_) >> heldByUs()
     }
 
@@ -74,6 +74,7 @@ class TakeFenceScopeSpec extends Specification implements RunChainFakes {
         new TakeDispositionResume(mechanics, new TakeDecisionResume(mechanics), git, VirtualTimeRetries.terminalWrite())
     }
 
+    // Scenario: git/git-task-persistence / Completed and Aborted outcomes run no fence
     def "a #outcome run runs no delivery fence"() {
         given: 'a round journal that decides whether the run delivers or aborts'
         journal = roundJournal

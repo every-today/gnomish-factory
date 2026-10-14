@@ -61,7 +61,7 @@ class GitModeRunnerFreshRunSpec extends Specification implements RunChainFakes, 
         Files.createDirectories(TaskWorktreePath.resolve(registeredClone, 'PROJ-1'))
         store.taskRepository(_) >> lifecycleStore
         store.attemptPersistence(_, _) >> { persistence }
-        store.readRecordedState(_) >> { stateRead.call() }
+        store.readRecordedState(_, _) >> { stateRead.call() }
     }
 
     private static TaskContext context(String taskId = 'PROJ-1') {
@@ -140,15 +140,16 @@ class GitModeRunnerFreshRunSpec extends Specification implements RunChainFakes, 
     // FR6, FR7: the run-start hygiene, the single creation, and the terminal boundary. Hygiene runs
     // BEFORE the task is created — a stale worktree registration or a live hook left in place would
     // otherwise apply to the branch this run is about to make.
-    def "prunes and hardens before creating the task, then records and disposes at the end"() {
+    // Scenario: git/git-task-persistence / Runner start prunes worktrees and sweeps orphans
+    def "hardens and prunes before creating the task, then records and disposes at the end"() {
         when:
         runCapturingStdout()
 
-        then:
-        1 * worktrees.pruneWorktrees(cloneDir)
-
-        then:
+        then: 'the clone is checked (its ref backend inside harden) before anything is written to it (design D13 of tighten-spec-contract, as amended 2026-10-13)'
         1 * branches.harden(cloneDir)
+
+        then: 'run-start hygiene runs before anything is created (FR17, design D11)'
+        1 * worktrees.pruneWorktrees(cloneDir)
 
         then:
         1 * lifecycleStore.createTask({
@@ -163,6 +164,7 @@ class GitModeRunnerFreshRunSpec extends Specification implements RunChainFakes, 
 
     // FR6, FR15, design D7: the branch always starts at the peeled law commit, and the resolved ref
     // — the raw --base, or the clone's HEAD when there is none — travels beside it as the pin.
+    // Scenario: git/git-task-persistence / The law and the pin guard bind from the pinned SHA
     def "starts the branch at the law commit and pins the resolved ref (#base)"() {
         when:
         runCapturingStdout(base)

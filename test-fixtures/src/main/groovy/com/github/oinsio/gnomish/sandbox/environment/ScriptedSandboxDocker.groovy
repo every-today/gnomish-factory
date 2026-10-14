@@ -104,14 +104,19 @@ class ScriptedSandboxDocker extends RecordingDockerCli {
                         // A fixed instant git accepts as a commit date (the epoch is rejected), never the
                         // wall clock (FR21 of supervise-daemon-loops-and-embed-dashboard).
                         new VirtualClock(Instant.parse('2026-01-01T00:00:00Z')), { d -> } as Sleeper), DEFAULT_COMMAND_TIMEOUT)
-        new ContainerEnvironments(this, key, new ContainerEnvironmentBuilder(
-                        this,
-                        new BoxGitLink(sourceClone, { String container, String branch -> } as ContainerHarvest),
-                        sandbox,
-                        timing,
-                        ChildEnvAllowlist.none(),
-                        guardRoot,
-                        new ObjectOwnership(mode, projectId)), restoration, timing)
+        new ContainerEnvironments(
+                new BoxEquipment(this, sandbox, timing, guardRoot, mode),
+                key,
+                // A scripted box changed nothing: its harvest lands the branch's own tip in the
+                // task's quarantine, as a real harvest of an unchanged box does (design D18 of
+                // tighten-spec-contract), so the admission finds the range already on the branch.
+                new BoxGitLink(sourceClone, { String container, String branch ->
+                    new com.github.oinsio.gnomish.adapter.git.GitProcessRunner().run(sourceClone, 'update-ref',
+                    com.github.oinsio.gnomish.adapter.git.ContainerHarvestFetch.quarantine(branch).name(), 'refs/heads/' + branch)
+                } as ContainerHarvest),
+                ChildEnvAllowlist.none(),
+                projectId,
+                restoration)
     }
 
     /** Reads a fake-agent scenario's scripted stream from the {@code fake-agent} resources beside this fixture. */

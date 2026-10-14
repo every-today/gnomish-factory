@@ -45,9 +45,10 @@ class GitVersionFloorSpec extends Specification implements AppAssemblyFixture {
         logs.detach()
     }
 
+    // Scenario: git/git-transfer / Old git is refused before any work
     def "FR10: '#subcommand' is refused below the floor before any transfer, claim or tracker write"() {
         given: 'a git one release below the floor that records every invocation'
-        def oldGit = StandIn.link(homeDir.resolve('old-git'), 'version-2-44')
+        def oldGit = StandIn.link(homeDir.resolve('old-git'), 'version-2-50')
         def git = new GitProcessRunner(oldGit.toString())
 
         and: 'a tracker that records every interaction'

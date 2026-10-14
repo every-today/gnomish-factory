@@ -53,15 +53,16 @@ class LeasedEnvironmentCursorWiringSpec extends Specification implements BareGit
         new File(cloneDir.toFile(), 'seed.txt').text = 'seed'
         commitAll(cloneDir)
         gitOutput(cloneDir, 'branch', BRANCH)
+        // The branch starts at a registered closing commit, as STARTED leaves it (design D13).
+        gitOutput(cloneDir, 'update-ref', 'refs/gnomish-factory/' + BRANCH.substring('gnomish/'.length()), 'refs/heads/' + BRANCH)
         box = new LocalBoxEnvironment(cloneDir, Files.createDirectories(tempDir.resolve('box')))
         box.materialize(BRANCH, null)
         // The production seam: collaborators are wired over the leased VIEW of the environment of
         // the stage in flight, exactly as ContainerRunSupport.persistence() builds them.
         leased = new LeasedEnvironment({ box })
         def gitObjects = GitObjects.open(cloneDir.resolve('.git'), Files.createDirectories(tempDir.resolve('tmp')))
-        snapshotStep = new EnvironmentRoundSnapshot(box, runner, cloneDir, TASK, OpenedRound.reopen(rounds, cloneDir, BRANCH))
-        persistence = new EnvironmentAttemptPersistence(
-                leased, runner, cloneDir, gitObjects, TASK, rounds, ClaimEpochSource.NONE)
+        snapshotStep = new EnvironmentRoundSnapshot(box, runner, cloneDir, OpenedRound.reopen(rounds, cloneDir, BRANCH))
+        persistence = new EnvironmentAttemptPersistence(leased, runner, cloneDir, gitObjects, rounds, ClaimEpochSource.NONE)
     }
 
     private void closeRound(int round) {
@@ -82,6 +83,8 @@ class LeasedEnvironmentCursorWiringSpec extends Specification implements BareGit
 
     // FR6, M4: the position the guard actually holds reaches the state commit THROUGH the leased
     //     view — with the forward missing this read answered Optional.empty() and committed nothing.
+    // Scenario: sandbox/execution-environment / A delegating view forwards the denial surface
+    // Scenario: sandbox/sandbox-egress / The position and its record ride one commit
     def "the cursor read through the leased view lands in the state commit"() {
         given:
         box.denialCursor = COMMITTED
@@ -96,6 +99,7 @@ class LeasedEnvironmentCursorWiringSpec extends Specification implements BareGit
 
     // FR6, M4: the restore half of the round trip, driven through the same view — the offer must
     //     reach the box, and the position it left there must be what the next round commits.
+    // Scenario: sandbox/execution-environment / The cursor round-trip runs through the production delegating view
     def "a cursor restored through the leased view positions the box and is committed by the next round"() {
         when: 'a resuming instance offers the position recorded at the branch tip'
         leased.restoreDenials(DenialRestoration.at(COMMITTED))

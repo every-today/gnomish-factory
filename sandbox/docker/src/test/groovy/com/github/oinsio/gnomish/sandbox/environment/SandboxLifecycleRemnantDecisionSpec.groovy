@@ -1,5 +1,6 @@
 package com.github.oinsio.gnomish.sandbox.environment
 
+import com.github.oinsio.gnomish.app.sandboxlifecycle.SkippedVerdictSource
 import com.github.oinsio.gnomish.app.sandboxlifecycle.SweepVerdictCategory
 import java.time.Duration
 
@@ -54,6 +55,7 @@ class SandboxLifecycleRemnantDecisionSpec extends SandboxLifecycleDecisionSpecBa
 
         then:
         verdicts[0].category() == SweepVerdictCategory.SKIPPED_NO_VERDICT
+        verdicts[0].skipSource() == SkippedVerdictSource.TRACKER
         0 * disposal.dispose(_)
 
         when: 'a judge-role remnant, unowned, disposes on sight rather than waiting for the reap age'
@@ -148,6 +150,7 @@ class SandboxLifecycleRemnantDecisionSpec extends SandboxLifecycleDecisionSpecBa
     // The unrecognized object's own name matches no factory pattern, so the environment key's
     // triple belongs to some OTHER object: disposing by key would destroy that one and leave this
     // one running.
+    // Scenario: sandbox/sandbox-lifecycle / An unrecognized object is removed by its own name
     def "an unrecognized object is removed by its own name and kind, never by its environment key"() {
         when:
         decision.decideRemnant(

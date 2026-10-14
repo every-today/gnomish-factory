@@ -4,7 +4,6 @@ import com.github.oinsio.gnomish.app.console.DialogConsole;
 import com.github.oinsio.gnomish.app.port.console.ConsoleIO;
 import com.github.oinsio.gnomish.app.port.git.TaskGit;
 import com.github.oinsio.gnomish.app.port.git.TaskLifecycleStore;
-import com.github.oinsio.gnomish.app.workspace.DirectoryWorkspace;
 import com.github.oinsio.gnomish.domain.engine.EscalationReport;
 import com.github.oinsio.gnomish.domain.engine.TaskContext;
 import com.github.oinsio.gnomish.domain.engine.TaskOutcome;
@@ -154,7 +153,7 @@ final class GitResumeContinuation {
         PipelineDefinition definition = order.definition();
         Path worktree = bootstrap.worktreePath();
         var persistence = git.store().attemptPersistence(worktree, bootstrap.taskId());
-        var workspace = new DirectoryWorkspace(worktree);
+        var workspace = assembly.workspaceAt(worktree);
         var assembled =
                 // Git-mode host resume attaches the same mid-round push decoration the fresh
                 // run does (FR1, FR3, design D3 of wire-host-mid-round-push).
@@ -182,7 +181,7 @@ final class GitResumeContinuation {
 
         if (outcome instanceof TaskOutcome.Completed) {
             TaskOutcome.Completed completed = new TaskOutcome.Completed(git.store()
-                    .readRecordedState(worktree)
+                    .readRecordedState(worktree, bootstrap.taskId())
                     .orElseThrow(() -> AbsentEnvelope.state(bootstrap.taskId(), worktree)));
             GitOutcomeRecorder.recordAndCleanUp(git, taskRepository, cloneDir, worktree, bootstrap.taskId(), completed);
             return;

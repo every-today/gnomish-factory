@@ -1,0 +1,6 @@
+spec: observability/status-report
+
+# Documentation facts: the file named is the scenario's subject. The reference comparison fails on
+# a renamed or removed field; whether the author then bumps the version or regenerates the file is
+# the policy the ADR states (finding F100).
+A breaking change to a released contract bumps the version => docs/adr/0016-json-contract-versioning.md

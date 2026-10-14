@@ -10,6 +10,9 @@ boom
 [docker-daemon-down]
 Cannot connect to the Docker daemon at unix:///var/run/docker.sock
 
+[fetch-progress]
+Receiving objects:  50% (1/2)
+
 [git-broken-install]
 git: broken install
 
@@ -21,6 +24,9 @@ fatal: could not read Password for 'https://ghp_FAKETOKEN1234567890@github.com':
 
 [password-prompt-leak]
 fatal: could not read Password for 'https://ghp_FAKETOKEN1234567890@github.com'
+
+[register-refused]
+the factory register may not move
 
 [stand-in-refuses]
 fatal: stand-in git refuses

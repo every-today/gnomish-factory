@@ -42,6 +42,8 @@ class ParkDeliveryFenceSpec extends Specification implements BareGitRepoFixture 
     private String commitPark() {
         Files.writeString(clone.resolve('park.txt'), 'parked')
         commitAll(clone, 'task parked')
+        // The outcome commit registered itself, as the lifecycle push does (FR13 of tighten-spec-contract).
+        gitOutput(clone, 'update-ref', "refs/gnomish-factory/${TASK_ID}", 'HEAD')
         gitOutput(clone, 'rev-parse', 'HEAD')
     }
 
@@ -55,6 +57,7 @@ class ParkDeliveryFenceSpec extends Specification implements BareGitRepoFixture 
         StandIn.link(hooks.resolve('pre-receive'), preset)
     }
 
+    // Scenario: git/git-task-persistence / Park commit is pushed before the tracker signal
     def "an undelivered park commit is pushed and reported delivered"() {
         given:
         def parked = commitPark()
@@ -66,6 +69,9 @@ class ParkDeliveryFenceSpec extends Specification implements BareGitRepoFixture 
         then:
         verdict instanceof ParkDeliveryVerdict.Delivered
         originTip() == Optional.of(parked)
+
+        and: 'the park landed whole: its register with it, in one atomic push (FR13 of tighten-spec-contract)'
+        gitOutput(origin, 'rev-parse', "refs/gnomish-factory/${TASK_ID}") == parked
     }
 
     def "an already delivered tip is confirmed without a push"() {
@@ -82,6 +88,8 @@ class ParkDeliveryFenceSpec extends Specification implements BareGitRepoFixture 
         originTip() == Optional.of(parked)
     }
 
+    // Scenario: git/git-task-persistence / Fence delivers before the park lands
+    // Scenario: observability/factory-logging / Recovered transient is not a WARN
     def "a transient first failure is recovered by the bounded re-attempt"() {
         given: 'a hook that rejects only the first push it sees'
         ParkDeliveryVerdict verdict = null
@@ -105,6 +113,8 @@ class ParkDeliveryFenceSpec extends Specification implements BareGitRepoFixture 
         events[0].formattedMessage.startsWith('park delivery push failed, re-attempting once:')
     }
 
+    // Scenario: git/git-task-persistence / Fence exhaustion surfaces instead of blocking
+    // Scenario: observability/factory-logging / One failure, one log
     def "an unreachable origin exhausts the fence into a note, not an exception"() {
         given:
         ParkDeliveryVerdict verdict = null
@@ -129,6 +139,7 @@ class ParkDeliveryFenceSpec extends Specification implements BareGitRepoFixture 
         events[1].formattedMessage.startsWith(OperatorEvent.PARK_FENCE_EXHAUSTED.head() + 'park delivery fence exhausted, parking anyway:')
     }
 
+    // Scenario: git/git-task-persistence / No origin, no fence
     def "a clone with no origin performs no remote interaction"() {
         given:
         ParkDeliveryVerdict verdict = null

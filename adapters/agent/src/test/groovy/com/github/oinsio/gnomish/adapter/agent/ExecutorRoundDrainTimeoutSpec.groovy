@@ -6,6 +6,7 @@ import com.github.oinsio.gnomish.FactoryProperties
 import com.github.oinsio.gnomish.app.port.agent.RoundEnvironmentSource
 import com.github.oinsio.gnomish.domain.engine.fake.VirtualClock
 import com.github.oinsio.gnomish.domain.engine.port.ExecutorFailure
+import com.github.oinsio.gnomish.sandbox.ChildEnvAllowlist
 import com.github.oinsio.gnomish.sandbox.ExecCommand
 import com.github.oinsio.gnomish.sandbox.ExecHandle
 import com.github.oinsio.gnomish.sandbox.TaskExecutionEnvironment
@@ -39,6 +40,7 @@ class ExecutorRoundDrainTimeoutSpec extends Specification {
     }
 
     // FR2: the grace expires while the drain is still reading — an infrastructure failure.
+    // Scenario: executor/agent-executor / A drain unfinished after the grace is infrastructure
     def "a drain that outlives the tail-drain grace throws StreamDrainTimeoutException"() {
         given: 'a process that exited normally but whose stdout never ends'
         def handle = new ExitedExecHandle(nonEndingStream(stuck))
@@ -58,6 +60,7 @@ class ExecutorRoundDrainTimeoutSpec extends Specification {
 
     // FR2: an interrupted round thread is the drain's other infrastructure failure, and
     // the executor must not report it as a grace that was too short.
+    // Scenario: executor/agent-executor / An interrupted wait is not blamed on the grace
     def "an interrupted round thread throws StreamDrainInterruptedException, not a timeout"() {
         given:
         def handle = new ExitedExecHandle(nonEndingStream(stuck))
@@ -87,7 +90,7 @@ class ExecutorRoundDrainTimeoutSpec extends Specification {
                         new FactoryProperties('factory-01', 'claude', grace, null, null, null),
                         new VirtualClock(),
                         { event -> },
-                        new AgentRoundResultExtractor()),
+                        new AgentRoundResultExtractor(), ChildEnvAllowlist.none()),
                 new DecisionFileReader(),
                 StageExecutorRequests.request(workspaceDir),
                 'prompt',

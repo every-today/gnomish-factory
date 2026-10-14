@@ -37,7 +37,7 @@ import spock.lang.TempDir
  * branches, deduplicated per task with the local tip preferred, into a compact
  * {@link TaskListRow} summary — the source for {@code gnomish status}'s list mode.
  */
-class TaskBranchListerSpec extends Specification implements BareGitRepoFixture {
+class TaskBranchListerSpec extends Specification implements BareGitRepoFixture, RegisteredBranchFixture {
 
     @TempDir
     Path tempDir
@@ -71,6 +71,7 @@ class TaskBranchListerSpec extends Specification implements BareGitRepoFixture {
                 TaskStart.commit(repo, 'HEAD'),
                 TaskStart.pin('HEAD', BaseRule.LOCAL_HEAD),
                 TaskState.atStageStart('implement'))
+        registerTip(repo, taskId)
     }
 
     private void createLocalTask(String taskId, String stage = 'implement', int attemptsUsed = 0) {
@@ -81,6 +82,7 @@ class TaskBranchListerSpec extends Specification implements BareGitRepoFixture {
             new ToolCall(0, 'bash', Instant.parse('2026-07-18T09:00:00Z'), Duration.ofMillis(100))
         ])
         new GitAttemptPersistence(runner, worktree, taskId, ClaimEpochSource.NONE).persist(taskId, state, trace)
+        registerTip(registeredClone.clonePath(), taskId)
     }
 
     /** Records one completed round on an existing task branch, so its tip classifies as in-flight. */
@@ -91,8 +93,10 @@ class TaskBranchListerSpec extends Specification implements BareGitRepoFixture {
                         ExecutorUsage.none(), JudgeUsage.none(), [], Stop.none()))
         new GitAttemptPersistence(runner, worktree, taskId, ClaimEpochSource.NONE).persist(taskId, state,
                 new ToolTrace(new AttemptKey(taskId, stage, 0), []))
+        registerTip(registeredClone.clonePath(), taskId)
     }
 
+    // Scenario: cli/task-inspection / Overview of all tasks
     def "FR13: overview of all tasks — three local gnomish branches are all listed with stage and attempts"() {
         given:
         createLocalTask('PROJ-1', 'implement', 0)
@@ -125,6 +129,7 @@ class TaskBranchListerSpec extends Specification implements BareGitRepoFixture {
         rows*.stage() == ['release']
     }
 
+    // Scenario: cli/task-inspection / Remote-only tasks are listed once
     def "FR13: remote-only tasks are listed once, and a task present both locally and on origin reads from its local tip"() {
         // Each createTask below resolves its start commit in the very repository the branch is cut
         //     in. Resolving it in `cloneDir` instead only ever worked by SHA coincidence: that repo
@@ -146,7 +151,8 @@ class TaskBranchListerSpec extends Specification implements BareGitRepoFixture {
                 new ToolTrace(new AttemptKey('REMOTE-ONLY', 'implement', 0), [
                     new ToolCall(0, 'bash', Instant.parse('2026-07-18T09:00:00Z'), Duration.ofMillis(50))
                 ]))
-        runner.run(worktreeFor(seed, 'REMOTE-ONLY'), 'push', 'origin', 'gnomish/REMOTE-ONLY')
+        registerTip(worktreeFor(seed, 'REMOTE-ONLY'), 'REMOTE-ONLY')
+        runner.run(worktreeFor(seed, 'REMOTE-ONLY'), 'push', 'origin', 'gnomish/REMOTE-ONLY', 'refs/gnomish-factory/REMOTE-ONLY')
 
         // Task BOTH: pushed from the seed clone too, so origin carries it.
         createTaskAtHead(seed, 'BOTH')
@@ -155,12 +161,15 @@ class TaskBranchListerSpec extends Specification implements BareGitRepoFixture {
                 new ToolTrace(new AttemptKey('BOTH', 'implement', 0), [
                     new ToolCall(0, 'bash', Instant.parse('2026-07-18T09:00:00Z'), Duration.ofMillis(50))
                 ]))
-        runner.run(worktreeFor(seed, 'BOTH'), 'push', 'origin', 'gnomish/BOTH')
+        registerTip(worktreeFor(seed, 'BOTH'), 'BOTH')
+        runner.run(worktreeFor(seed, 'BOTH'), 'push', 'origin', 'gnomish/BOTH', 'refs/gnomish-factory/BOTH')
 
         def observerClone = tempDir.resolve('observer-clone')
         seedClone(tempDir, bare.toString(), observerClone, '--branch', 'main', '--single-branch')
         // Fetch REMOTE-ONLY and BOTH as remote-tracking refs (no local branch), matching a peer instance's clone state.
+        // Each with its factory register, as the touchpoint fetch lands it (design D13 of tighten-spec-contract).
         fetchFromOrigin(observerClone, 'refs/heads/gnomish/REMOTE-ONLY:refs/remotes/origin/gnomish/REMOTE-ONLY')
+        fetchFromOrigin(observerClone, 'refs/gnomish-factory/REMOTE-ONLY:refs/gnomish-factory/REMOTE-ONLY')
         fetchFromOrigin(observerClone, 'refs/heads/gnomish/BOTH:refs/remotes/origin/gnomish/BOTH')
 
         def observer = register(observerClone)
@@ -193,6 +202,7 @@ class TaskBranchListerSpec extends Specification implements BareGitRepoFixture {
     // which branches exist, so it must not render as "no tasks" — the empty table is a positive
     // claim, and printing it for a listing that never ran is the most misleading answer this
     // read-only command can give.
+    // Scenario: cli/task-inspection / A failed enumeration is an error, not an empty table
     def "FR13: a refused enumeration is a command failure, not an empty table"() {
         given: 'a directory that is not a git repository at all, so for-each-ref exits non-zero'
         def notARepo = Files.createDirectory(tempDir.resolve('not-a-repo'))
@@ -265,17 +275,20 @@ class TaskBranchListerSpec extends Specification implements BareGitRepoFixture {
         rows[0].taskId() == 'PROJ-1'
     }
 
+    // Scenario: cli/task-inspection / Mixed-shape repository lists one row per task
     def "FR16: a mixed-shape clone lists one row per branch, each carrying its shape"() {
         given: 'a delivered branch, a freshly created one, an in-flight one and a parked one'
         def repository = new GitTaskRepository(runner, registeredClone, ClaimEpochSource.NONE, new VirtualClock())
         createLocalTask('DELIVERED-1')
         repository.recordOutcome('DELIVERED-1', new TaskOutcome.Completed(TaskState.atStageStart('implement')), TrackerWrite.OWED)
         repository.finishCleanup('DELIVERED-1')
+        registerTip(cloneDir, 'DELIVERED-1')
         createTaskAtHead(registeredClone, 'FRESH-1')
         createLocalTask('FLIGHT-1')
         recordRound('FLIGHT-1')
         createLocalTask('PARKED-1')
         repository.recordOutcome('PARKED-1', new TaskOutcome.Paused(TaskState.atStageStart('verify'), 'implement'), TrackerWrite.OWED)
+        registerTip(cloneDir, 'PARKED-1')
 
         when:
         def rows = lister.list(cloneDir)
@@ -294,6 +307,7 @@ class TaskBranchListerSpec extends Specification implements BareGitRepoFixture {
         byId['PARKED-1'].outcome() == 'paused'
     }
 
+    // Scenario: cli/task-inspection / One bad branch never kills the listing
     def "FR16, UX4: one unparseable branch degrades to its own diagnostic row and never kills the listing"() {
         given: 'two healthy tasks and one whose state.json was corrupted at the tip'
         createLocalTask('HEALTHY-1')
@@ -304,6 +318,7 @@ class TaskBranchListerSpec extends Specification implements BareGitRepoFixture {
         def worktree = worktreeFor(registeredClone, 'BROKEN-1')
         new File(worktree.toFile(), '.gnomish-task/state.json').text = '{ not json at all'
         commitAll(worktree, 'break state')
+        registerTip(cloneDir, 'BROKEN-1')
 
         when:
         def rows = lister.list(cloneDir)
@@ -333,6 +348,7 @@ class TaskBranchListerSpec extends Specification implements BareGitRepoFixture {
         def worktree = worktreeFor(registeredClone, 'PRE-1')
         runner.run(worktree, 'rm', '-f', '.gnomish-task/state.json')
         commitAll(worktree, 'drop state')
+        registerTip(cloneDir, 'PRE-1')
 
         when:
         def rows = lister.list(cloneDir)

@@ -31,6 +31,7 @@ class CloneMutationConcurrencySpec extends Specification implements BareGitRepoF
     @TempDir
     Path tempDir
 
+    // Scenario: serve/factory-serve / Overlapping slot lifecycles
     def "N concurrent slot lifecycles against one clone never corrupt it, and every branch is pushed correctly"() {
         given: 'one shared clone with an origin remote, and a logging git wrapper to observe mutating calls'
         def bare = initBareRepo(tempDir, 'origin.git')
@@ -62,7 +63,7 @@ class CloneMutationConcurrencySpec extends Specification implements BareGitRepoF
                     def runner = new GitProcessRunner(gitWrapper.toString())
                     def branchCreator = new TaskBranchCreator(runner)
                     def worktreeManager = new TaskWorktreeManager(runner, registeredClone)
-                    def push = new BranchPush(runner)
+                    def push = new RefspecPush(runner)
 
                     def branchName = (branchCreator.createBranch(cloneDir, taskId, TaskStart.commit(cloneDir, 'HEAD'))
                             as BranchCreationResult.Created).branchName()
@@ -81,7 +82,7 @@ class CloneMutationConcurrencySpec extends Specification implements BareGitRepoF
                     def trackingRef = "refs/remotes/origin/${branchName}"
                     fetchFromOrigin(worktree, "refs/heads/${branchName}:${trackingRef}")
 
-                    push.pushBestEffort(worktree, branchName)
+                    push.push(worktree, branchName)
 
                     def cleanup = new TaskWorktreeCleanup(runner)
                     def outcome = new TaskOutcome.Completed(TaskState.atStageStart('build'))

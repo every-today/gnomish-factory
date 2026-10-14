@@ -6,12 +6,13 @@ import com.github.oinsio.gnomish.adapter.git.FactoryCloneHardeningException
 import com.github.oinsio.gnomish.adapter.git.GitPersistFailedException
 import com.github.oinsio.gnomish.adapter.git.GitResyncFailedException
 import com.github.oinsio.gnomish.adapter.git.HarvestFailedException
-import com.github.oinsio.gnomish.adapter.git.HarvestRefusedException
 import com.github.oinsio.gnomish.adapter.git.RoundBoundaryViolationException
 import com.github.oinsio.gnomish.adapter.git.WorktreeCreationFailedException
 import com.github.oinsio.gnomish.adapter.law.UnreadableLawFileException
+import com.github.oinsio.gnomish.app.port.git.BoxGitVersionRefusedException
 import com.github.oinsio.gnomish.app.port.git.BranchLocationRefusedException
 import com.github.oinsio.gnomish.app.port.git.BranchLocationUnavailableException
+import com.github.oinsio.gnomish.app.port.git.CloneRefFormatRefusedException
 import com.github.oinsio.gnomish.app.port.git.GitSalvageFailedException
 import com.github.oinsio.gnomish.app.port.git.GitTaskRepositoryException
 import com.github.oinsio.gnomish.app.port.git.GitVersionRefusedException
@@ -77,6 +78,8 @@ class TypedExceptionMessageSpec extends Specification {
         declared.toSorted() == tabledExceptions()
     }
 
+    // Scenario: observability/factory-logging / An exception built from subprocess output is inert by type
+    // Scenario: core/untrusted-text / An exception carrying subprocess output renders safely
     def "FR5: #exception renders its carrier through the log exit, never raw"() {
         given: 'the detail as it was captured'
         def carried = mint.call(HOSTILE) as UntrustedText
@@ -185,13 +188,6 @@ class TypedExceptionMessageSpec extends Specification {
                 }
             ],
             [
-                'HarvestRefusedException',
-                { String raw -> UntrustedText.subprocess(raw) },
-                { UntrustedText carried ->
-                    new HarvestRefusedException('gnomish/task-x', carried)
-                }
-            ],
-            [
                 'WorktreeCreationFailedException',
                 { String raw -> UntrustedText.subprocess(raw) },
                 { UntrustedText carried ->
@@ -269,7 +265,25 @@ class TypedExceptionMessageSpec extends Specification {
                 'GitVersionRefusedException',
                 { String raw -> UntrustedText.subprocess(raw) },
                 { UntrustedText carried ->
-                    new GitVersionRefusedException('2.45.1', carried, 'why')
+                    new GitVersionRefusedException('2.51.0', carried, 'why')
+                }
+            ],
+            [
+                // What git --version printed inside a refused sandbox image (design D13 of
+                // tighten-spec-contract, as amended 2026-10-13).
+                'BoxGitVersionRefusedException',
+                { String raw -> UntrustedText.container(raw) },
+                { UntrustedText carried ->
+                    new BoxGitVersionRefusedException('img:1', '2.51.0', carried, 'why')
+                }
+            ],
+            [
+                // What git rev-parse --show-ref-format printed for a refused factory clone (design
+                // D13 of tighten-spec-contract, as amended 2026-10-13).
+                'CloneRefFormatRefusedException',
+                { String raw -> UntrustedText.subprocess(raw) },
+                { UntrustedText carried ->
+                    new CloneRefFormatRefusedException('/clones/x', 'reftable', carried)
                 }
             ],
             [

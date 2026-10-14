@@ -1,7 +1,6 @@
 package com.github.oinsio.gnomish.adapter.git
 
 import com.github.oinsio.gnomish.sandbox.CapabilityPassport
-import com.github.oinsio.gnomish.sandbox.ChildEnvAllowlist
 import com.github.oinsio.gnomish.sandbox.DenialCursor
 import com.github.oinsio.gnomish.sandbox.DenialRead
 import com.github.oinsio.gnomish.sandbox.DenialRestoration
@@ -10,6 +9,7 @@ import com.github.oinsio.gnomish.sandbox.ExecHandle
 import com.github.oinsio.gnomish.sandbox.TaskExecutionEnvironment
 import com.github.oinsio.gnomish.sandbox.environment.HostExecHandle
 import com.github.oinsio.gnomish.sandbox.environment.HostTaskExecutionEnvironment
+import com.github.oinsio.gnomish.testfixtures.TestChildEnvironment
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
@@ -21,7 +21,7 @@ import org.jspecify.annotations.Nullable
  * semantics over local directories: materialize is a real {@code git clone
  * --no-hardlinks} from the factory clone, exec runs a local subprocess in the
  * box working copy, the file channel is plain files, and harvest is a real
- * fast-forward-only fetch from the box back into the factory clone — the same
+ * fetch from the box into the factory clone's quarantine — the same
  * git transport contract as the container adapter, minus Docker. Lets the
  * snapshot-first round protocol (FR21/FR22) and the boundary checks run as
  * fast local-bare-repo specs (task 5.5/5.6) with the identical git mechanics
@@ -79,7 +79,7 @@ class LocalBoxEnvironment implements TaskExecutionEnvironment, SeedTransferFixtu
         // make-checkpoint-gate-durable): nothing of the test JVM's environment is inherited — a
         // GNOMISH_DECISION_FILE the test run was handed never reaches the fake agent.
         builder.environment().clear()
-        builder.environment().putAll(ChildEnvAllowlist.none().compose(HostTaskExecutionEnvironment.BASE_ENV_NAMES, command.env()))
+        builder.environment().putAll(TestChildEnvironment.hostAllowlist().compose(HostTaskExecutionEnvironment.BASE_ENV_NAMES, command.env()))
         def process = builder.start()
         if (command.stdin() != null) {
             process.outputStream.withStream {
@@ -104,13 +104,17 @@ class LocalBoxEnvironment implements TaskExecutionEnvironment, SeedTransferFixtu
         Files.isRegularFile(resolved) ? Optional.of(Files.readAllBytes(resolved)) : Optional.<byte[]> empty()
     }
 
+    /**
+     * The harvest the container adapter performs, over a local path instead of the {@code ext::}
+     * transport: the box's branch lands in the task's quarantine, forced, and never on the task
+     * branch — the admission moves the branch (design D18 of tighten-spec-contract). The refspec is
+     * the transfer owner's own ({@link ContainerHarvestFetch#quarantine}).
+     */
     @Override
     void harvest() {
-        def fetch = seedFetch(cloneDir, workingCopy.toString(), branch + ':' + branch, '--no-recurse-submodules')
+        def refspec = ContainerHarvestFetch.quarantine(branch).harvestRefspec(branch).value()
+        def fetch = seedFetch(cloneDir, workingCopy.toString(), refspec, '--no-recurse-submodules')
         if (fetch.exitCode() != 0) {
-            if (fetch.stderr().forParsing().contains('non-fast-forward')) {
-                throw new HarvestRefusedException(branch, fetch.stderr())
-            }
             throw new HarvestFailedException(branch, fetch.stderr())
         }
     }

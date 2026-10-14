@@ -6,6 +6,7 @@ import com.github.oinsio.gnomish.sandbox.ExecCommand
 import com.github.oinsio.gnomish.sandbox.IsolationLevel
 import com.github.oinsio.gnomish.sandbox.ProcessStartException
 import com.github.oinsio.gnomish.sandbox.TaskExecutionEnvironment
+import com.github.oinsio.gnomish.testfixtures.TestChildEnvironment
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
@@ -23,6 +24,7 @@ import spock.lang.TempDir
  *
  * <p>Implements FR2, FR4, FR9, NFR-S3, M1, M3 of add-sandbox-core.
  */
+// Scenario: sandbox/execution-environment / Contract suite runs against any adapter
 class HostTaskExecutionEnvironmentSpec extends TaskExecutionEnvironmentContract {
 
     @TempDir
@@ -32,7 +34,7 @@ class HostTaskExecutionEnvironmentSpec extends TaskExecutionEnvironmentContract 
 
     @Override
     protected Optional<TaskExecutionEnvironment> arrange() {
-        def e = new HostTaskExecutionEnvironment(workingCopy, clock, ChildEnvAllowlist.none())
+        def e = new HostTaskExecutionEnvironment(workingCopy, clock, TestChildEnvironment.hostAllowlist())
         e.materialize('task/contract', null)
         Optional.of(e)
     }
@@ -42,11 +44,12 @@ class HostTaskExecutionEnvironmentSpec extends TaskExecutionEnvironmentContract 
         'TaskExecutionEnvironment (host)'
     }
 
-    private HostTaskExecutionEnvironment hostEnv(ChildEnvAllowlist allowlist = ChildEnvAllowlist.none()) {
+    private HostTaskExecutionEnvironment hostEnv(ChildEnvAllowlist allowlist = TestChildEnvironment.hostAllowlist()) {
         new HostTaskExecutionEnvironment(workingCopy, clock, allowlist)
     }
 
     // FR2: the host passport declares no isolation
+    // Scenario: sandbox/execution-environment / Host passport declares no isolation
     def "passport declares no isolation, no egress control, no task-to-task boundary"() {
         expect:
         def passport = hostEnv().passport()
@@ -72,6 +75,7 @@ class HostTaskExecutionEnvironmentSpec extends TaskExecutionEnvironmentContract 
     // FR9, M3 (task 7.2): nothing outside base ∪ passthrough ∪ factory-set reaches the child —
     // the child's full env name list is a subset of the composed allowlist plus the few names the
     // shell sets for itself, whatever the factory JVM's environment holds.
+    // Scenario: sandbox/execution-environment / Host secrets never reach the box
     def "no factory environment variable outside the allowlist leaks into the child"() {
         given: 'the host env with the empty allowlist and one factory-set variable'
         def e = hostEnv()
@@ -111,7 +115,7 @@ class HostTaskExecutionEnvironmentSpec extends TaskExecutionEnvironmentContract 
     // set, so its absence can only come from the credential subtraction).
     def "a declared credential is excluded from the composed environment while a base variable survives"() {
         given: 'an allowlist declaring HOME a credential, both HOME and USER present in the factory environment'
-        def e = hostEnv(ChildEnvAllowlist.of([], ['HOME']))
+        def e = hostEnv(TestChildEnvironment.hostAllowlist([], ['HOME']))
 
         when: 'a command reports both'
         def report = 'if [ -n "${HOME:-}" ]; then echo HOME=present; else echo HOME=absent; fi; if [ -n "${USER:-}" ]; then echo USER=present; else echo USER=absent; fi'
@@ -126,12 +130,11 @@ class HostTaskExecutionEnvironmentSpec extends TaskExecutionEnvironmentContract 
 
     // FR9, D6 (task 7.2): a passthrough name carries its live factory-environment value into the
     // child; the value comes from the allowlist's env source at exec time, never from config.
+    // Scenario: sandbox/execution-environment / Passthrough carries live values by name
     def "a passthrough name carries a live value into the child"() {
         given: 'an allowlist passing GNOMISH_TOOLCHAIN through, backed by a mutable env source'
         def factoryEnv = [GNOMISH_TOOLCHAIN: 'first']
-        def e = hostEnv(ChildEnvAllowlist.over(['GNOMISH_TOOLCHAIN'], [], {
-            -> factoryEnv
-        }))
+        def e = hostEnv(ChildEnvAllowlist.of(['GNOMISH_TOOLCHAIN'], [], TestChildEnvironment.valuesOf(factoryEnv)))
 
         when: 'the factory value changes between execs'
         def report = 'echo "[$GNOMISH_TOOLCHAIN]"'
@@ -159,6 +162,8 @@ class HostTaskExecutionEnvironmentSpec extends TaskExecutionEnvironmentContract 
     }
 
     // NFR-S3, FR17: a channel path escaping the roots is refused
+    // Scenario: sandbox/execution-environment / File-channel paths resolve under the two roots
+    // Scenario: verification/verification-hardening / Path traversal is refused
     def "putFile to a path escaping the roots is refused"() {
         given: 'a materialized host env'
         def e = hostEnv()
@@ -175,6 +180,7 @@ class HostTaskExecutionEnvironmentSpec extends TaskExecutionEnvironmentContract 
     }
 
     // NFR-S3: a symlink resolving outside the roots is refused on read
+    // Scenario: sandbox/execution-environment / Symlink escape on the host adapter is refused
     def "readFile through a symlink escaping the roots is refused"() {
         given: 'a secret file outside the roots and a symlink to it inside the working copy'
         def e = hostEnv()
@@ -196,6 +202,7 @@ class HostTaskExecutionEnvironmentSpec extends TaskExecutionEnvironmentContract 
 
     // FR17: a planted symlink cannot smuggle a channel write into .git/** — the resolver
     //     compares the symlink-resolved anchor against the working copy's .git as well
+    // Scenario: verification/verification-hardening / Path traversal is refused
     def "putFile through a symlink into .git is refused"() {
         given: 'a working copy with a .git directory and a symlink pointing into it'
         def e = hostEnv()

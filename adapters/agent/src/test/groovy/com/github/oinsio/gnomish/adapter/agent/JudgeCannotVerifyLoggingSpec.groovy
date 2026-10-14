@@ -8,6 +8,7 @@ import com.github.oinsio.gnomish.adapter.law.PipelineLaw
 import com.github.oinsio.gnomish.domain.engine.fake.VirtualClock
 import com.github.oinsio.gnomish.domain.pipeline.VerifyCheck
 import com.github.oinsio.gnomish.operatorevent.OperatorEvent
+import com.github.oinsio.gnomish.sandbox.ChildEnvAllowlist
 import com.github.oinsio.gnomish.sandbox.ExecHandle
 import com.github.oinsio.gnomish.sandbox.ProcessStartException
 import com.github.oinsio.gnomish.sandbox.TaskExecutionEnvironment
@@ -59,7 +60,7 @@ class JudgeCannotVerifyLoggingSpec extends Specification {
                         propertiesWithGrace(grace),
                         new VirtualClock(),
                         { event -> },
-                        new AgentRoundResultExtractor()),
+                        new AgentRoundResultExtractor(), ChildEnvAllowlist.none()),
                 new JudgeVerdictExtractor(),
                 CHECK,
                 environment,
@@ -73,6 +74,7 @@ class JudgeCannotVerifyLoggingSpec extends Specification {
         warnings[0]
     }
 
+    // Scenario: observability/factory-logging / A vote that cannot be cast says so
     def "FR5: a process that cannot start is reported as a vote that cannot be cast"() {
         given:
         logs = LogCaptureSupport.attach(JudgeRoundExecution)

@@ -19,7 +19,7 @@ import org.gradle.process.ProcessForkOptions
  *
  * <p>Kept in sync with {@code com.github.oinsio.gnomish.adapter.git.AdversarialGitConfig} in
  * {@code :test-fixtures}: both name the same variable ({@code VARIABLE}) and the same committed
- * file ({@code RELATIVE_PATH}). The two share no classpath — the build cannot load a test
+ * file ({@code RELATIVE_PATH}), and the ref-format variable and its value ({@code REF_FORMAT}). The two share no classpath — the build cannot load a test
  * fixture — so the constants are spelled twice; the fixture owns the meaning of the keys and
  * offers {@code assertInEffect}, and its spec asserts that what git lists as the global
  * configuration equals the resource, so a divergence here fails that spec rather than passing
@@ -49,6 +49,19 @@ final class AdversarialGitConfig {
         GIT_CONFIG_VALUE_0: 'present',
     ].asImmutable()
 
+    /**
+     * The ref backend every repository the test build creates is initialised on, handed to git
+     * through {@code GIT_DEFAULT_REF_FORMAT} (since git 2.45; the config key
+     * {@code init.defaultRefFormat}, since 2.48, would do as well — both sit below the project's
+     * floor of 2.51 — but the variable keeps the backend in the environment this class sets,
+     * out of the adversarial file): the factory
+     * clone must be on reftable and the factory refuses any other (design D13 of
+     * tighten-spec-contract, as amended 2026-10-13), so every spec runs on the store production
+     * runs on. Not adversarial; it rides here because this is where the test build's git
+     * environment is set.
+     */
+    static final Map<String, String> REF_FORMAT = [GIT_DEFAULT_REF_FORMAT: 'reftable'].asImmutable()
+
     private AdversarialGitConfig() {
     }
 
@@ -60,6 +73,7 @@ final class AdversarialGitConfig {
         File file = project.rootProject.file(RELATIVE_PATH)
         task.environment(VARIABLE, file.absolutePath)
         task.environment(INHERITED_CONFIG)
+        task.environment(REF_FORMAT)
         task.inputs.file(file)
                 .withPropertyName('adversarialGitConfig')
                 .withPathSensitivity(PathSensitivity.NONE)

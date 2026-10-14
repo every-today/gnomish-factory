@@ -92,6 +92,8 @@ class GitTaskRepositoryApproveCheckpointSpec extends Specification implements Ba
         runner.run(worktree(), 'rev-list', '--count', 'HEAD').stdout().forParsing().trim() as int
     }
 
+    // Scenario: git/git-task-persistence / A checkpoint continuation clears the park
+    // Scenario: git/git-task-persistence / Approval is one commit past the gate
     def "FR3: the approval is one commit moving state.json past the gate and clearing the park"() {
         given:
         parkedAt(gated())
@@ -126,6 +128,8 @@ class GitTaskRepositoryApproveCheckpointSpec extends Specification implements Ba
         logs.detach()
     }
 
+    // Scenario: git/git-task-persistence / Approval of a non-gate tip refuses
+    // Scenario: lifecycle/task-branch-contract / A stale approval refuses
     def "FR3: an approval of a tip at #tipPosition refuses, writes nothing and names the tip's position"() {
         given:
         parkedAt(gated(tipPosition))
@@ -163,6 +167,7 @@ class GitTaskRepositoryApproveCheckpointSpec extends Specification implements Ba
         ]
     }
 
+    // Scenario: lifecycle/task-branch-contract / A stale approval refuses
     def "FR3: an approval whose state is itself at a gate refuses and writes nothing"() {
         given:
         parkedAt(gated())
@@ -192,11 +197,12 @@ class GitTaskRepositoryApproveCheckpointSpec extends Specification implements Ba
         tipState() == approved()
     }
 
-    def "FR3: a tip without state.json fails the approval with git's own refusal"() {
-        given: 'a branch whose tip lost its state file'
+    def "FR3: a registered commit without state.json fails the approval with git's own refusal"() {
+        given: 'a branch whose registered commit lost its state file'
         parkedAt(gated())
         runner.run(worktree(), 'rm', '-q', '.gnomish-task/state.json')
         runner.run(worktree(), '-c', 'user.email=a@b.c', '-c', 'user.name=a', 'commit', '-m', 'drop state')
+        runner.run(worktree(), 'update-ref', 'refs/gnomish-factory/PROJ-1', 'HEAD')
 
         when:
         repository.approveCheckpoint('PROJ-1', GATE, approved())

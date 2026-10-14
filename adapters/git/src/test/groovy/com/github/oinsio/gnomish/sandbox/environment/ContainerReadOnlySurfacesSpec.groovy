@@ -70,12 +70,8 @@ class ContainerReadOnlySurfacesSpec extends Specification implements BareGitRepo
         commitAll(source)
         gitOutput(source, 'branch', 'task/readonly')
         env = new ContainerTaskExecutionEnvironment(
-                new DockerCli(),
-                'ro-' + System.nanoTime(),
-                new BoxGitLink(source, new ContainerHarvestFetch(new GitProcessRunner(), source)),
-                new TaskContainerSettings(IMAGE, 'runc', LIMITS, false),
-                clock,
-                ChildEnvAllowlist.none(), new ObjectOwnership(OwnershipMode.TRACKED, 'proj-1'))
+                BoxEquipmentFixture.forBox(new DockerCli(), IMAGE, LIMITS, clock),
+                'ro-' + System.nanoTime(), new BoxGitLink(source, new ContainerHarvestFetch(new GitProcessRunner(), source)), ChildEnvAllowlist.none(), 'proj-1')
         env.materialize('task/readonly', null)
     }
 
@@ -94,6 +90,7 @@ class ContainerReadOnlySurfacesSpec extends Specification implements BareGitRepo
         handle.waitForExit()
     }
 
+    // Scenario: sandbox/execution-environment / Cage rules cannot be rewritten from inside
     def "FR20: the gnome can write its own working copy but not a root-owned control surface"() {
         expect: 'the gnome owns and can write the working copy'
         run('echo mine > /gnomish/work/mine.txt') == 0

@@ -113,6 +113,7 @@ class GitResumeBootstrapSpec extends GitResumeSpecBase {
         Files.writeString(rewriteWorktree.resolve('.gnomish-task').resolve('task.json'), rewritten)
         commitAll(rewriteWorktree, 'bump version')
         gitOutput(cloneDir, 'worktree', 'remove', '--force', rewriteWorktree.toString())
+        registerTip(cloneDir, 'PROJ-4')
 
         when:
         newResumeRunner(new ByteArrayInputStream(new byte[0]), System.out).bootstrap(cloneDir, 'PROJ-4')
@@ -184,6 +185,7 @@ class GitResumeBootstrapSpec extends GitResumeSpecBase {
     // wins and the unpushed local line, which was never durable for the fleet, is discarded. The
     // arbitration is the claim protocol's, so the discard runs only where a tenure is held; manual
     // run --resume, which claims nothing, keeps the pre-FR8 stop-and-report (see the spec below).
+    // Scenario: git/git-task-persistence / Diverged histories resolve automatically under the claim
     def "FR8: bootstrap() under a tenure discards a diverged local line and resumes from origin"() {
         given: 'a task branch pushed to a real origin'
         def bare = initBareRepo(tempDir, 'origin.git')
@@ -228,6 +230,7 @@ class GitResumeBootstrapSpec extends GitResumeSpecBase {
     // legitimate lease holders — and `gnomish run --resume` runs that protocol not at all. There
     // the local line may be the operator's only copy and nothing arbitrated it against origin, so
     // the bootstrap fails closed with the pre-FR8 stop-and-report instead of destroying it.
+    // Scenario: git/git-task-persistence / A claimless resume refuses the discard
     def "FR8: bootstrap() with no claim on the task refuses a diverged branch instead of discarding it"() {
         given: 'a task branch pushed to a real origin'
         def bare = initBareRepo(tempDir, 'origin.git')

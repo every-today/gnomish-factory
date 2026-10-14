@@ -5,12 +5,9 @@ import com.github.oinsio.gnomish.adapter.check.CheckProviderSeam;
 import com.github.oinsio.gnomish.adapter.check.FilesExistCheckRunner;
 import com.github.oinsio.gnomish.adapter.check.ShellCommandCheckRunner;
 import com.github.oinsio.gnomish.adapter.engine.InMemoryAttemptPersistence;
-import com.github.oinsio.gnomish.adapter.git.GitBaseRefs;
 import com.github.oinsio.gnomish.adapter.git.GitInfrastructureRetry;
 import com.github.oinsio.gnomish.adapter.git.GitProcessRunner;
-import com.github.oinsio.gnomish.adapter.git.GitTaskBranches;
-import com.github.oinsio.gnomish.adapter.git.GitTaskStore;
-import com.github.oinsio.gnomish.adapter.git.GitTaskWorktrees;
+import com.github.oinsio.gnomish.adapter.git.GitTaskBackend;
 import com.github.oinsio.gnomish.adapter.git.GitVersionCheck;
 import com.github.oinsio.gnomish.adapter.git.MidRoundPushRounds;
 import com.github.oinsio.gnomish.adapter.pipeline.GnomishDirPipelineSource;
@@ -21,6 +18,7 @@ import com.github.oinsio.gnomish.app.port.console.ConsoleIO;
 import com.github.oinsio.gnomish.app.port.git.TaskGit;
 import com.github.oinsio.gnomish.app.port.pipeline.PipelineSource;
 import com.github.oinsio.gnomish.app.port.secrets.SecretsProvider;
+import com.github.oinsio.gnomish.app.port.workspace.WorkspaceFactory;
 import com.github.oinsio.gnomish.app.project.FactoryHome;
 import com.github.oinsio.gnomish.app.project.RegisteredClone;
 import com.github.oinsio.gnomish.domain.engine.time.TimeEquipment;
@@ -146,22 +144,22 @@ public class ManualRunConfiguration {
         GitInfrastructureRetry retry = new GitInfrastructureRetry(
                 timeEquipment, GitInfrastructureRetry.DEFAULT_ATTEMPTS, GitInfrastructureRetry.DEFAULT_INITIAL_BACKOFF);
         InstantSource instantSource = timeEquipment.clock();
-        return new TaskGit(
-                new GitTaskStore(gitProcessRunner, claimEpochBook, retry, instantSource),
-                new GitTaskBranches(gitProcessRunner, claimEpochBook, retry),
-                new GitTaskWorktrees(gitProcessRunner, claimEpochBook),
+        // FR4, design D2 of fix-claim-epoch-fence; D12 of tighten-spec-contract: the one public
+        // assembly builds the three writers over the same book it puts into the bundle, so the
+        // claiming commands wrap their resolved tracker with the record their own writers read —
+        // and no second book can reach the writers, since their constructors are package-private.
+        // FR5, FR6 of add-base-ref-resolution: the bundle's base-ref capability runs under the
+        // same production git infrastructure retry.
+        return GitTaskBackend.taskGit(
+                gitProcessRunner,
+                retry,
+                instantSource,
                 // The mid-round push decoration (FR1, design D3 of wire-host-mid-round-push),
                 // built in exactly this one place: git-mode host control flows attach it via
                 // RunAssembly.withHostGitPush, and the selector applies it to the host rounds.
                 // The operator is stateless; per-task state (the shared poll suppressor) lives
                 // in the MidRoundPushRounds instance each application creates.
                 rounds -> new MidRoundPushRounds(rounds, gitProcessRunner, instantSource),
-                // FR5, FR6 of add-base-ref-resolution: default-branch discovery and the narrow base
-                // refresh, under the production git infrastructure retry.
-                new GitBaseRefs(gitProcessRunner, retry),
-                // FR4, design D2 of fix-claim-epoch-fence: the same book the three writers above
-                // stamp from travels inside the bundle, so the claiming commands wrap their
-                // resolved tracker with the record their own writers read.
                 claimEpochBook);
     }
 
@@ -264,9 +262,26 @@ public class ManualRunConfiguration {
             CheckEquipment checkEquipment,
             TimeEquipment timeEquipment,
             FactoryProperties factoryProperties,
-            SandboxProperties sandboxProperties) {
+            SandboxProperties sandboxProperties,
+            WorkspaceFactory workspaceFactory) {
         return new ManualRunAssembly(
-                systemConsoleIO, errorConsoleIO, checkEquipment, timeEquipment, factoryProperties, sandboxProperties);
+                systemConsoleIO,
+                errorConsoleIO,
+                checkEquipment,
+                timeEquipment,
+                factoryProperties,
+                sandboxProperties,
+                workspaceFactory);
+    }
+
+    /**
+     * The host workspace realization (finding F119, design D12 of tighten-spec-contract): built
+     * once here and handed to {@link PipelineStartup} and the run assembly, so no use case
+     * constructs a workspace adapter itself.
+     */
+    @Bean
+    public WorkspaceFactory workspaceFactory() {
+        return new DirectoryWorkspaceFactory();
     }
 
     /**

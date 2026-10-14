@@ -4,6 +4,7 @@ import com.github.oinsio.gnomish.adapter.agent.FakeAgentSupport
 import com.github.oinsio.gnomish.adapter.git.GitAttemptPersistence
 import com.github.oinsio.gnomish.adapter.git.GitProcessRunner
 import com.github.oinsio.gnomish.adapter.git.GitTaskRepository
+import com.github.oinsio.gnomish.adapter.git.RegisteredBranchFixture
 import com.github.oinsio.gnomish.adapter.git.TaskStart
 import com.github.oinsio.gnomish.app.port.agent.RoundEnvironmentSource
 import com.github.oinsio.gnomish.app.port.git.TaskGit
@@ -43,7 +44,7 @@ import spock.lang.TempDir
  * branch and worktree, prints the UX1 banner upfront, and runs the pipeline against the worktree
  * — proven here end to end against a local bare-repo clone (task 4.4).
  */
-class ManualRunRunnerSpec extends Specification implements AppAssemblyFixture, ManualRunPipelineFixture {
+class ManualRunRunnerSpec extends Specification implements AppAssemblyFixture, ManualRunPipelineFixture, RegisteredBranchFixture {
 
     @TempDir
     Path projectRoot
@@ -90,6 +91,7 @@ autonomy:
 
     // FR12 of add-manual-run; FR8 of fix-operator-blockers: only the empty command line a Spring
     // test context starts with is the no-op
+    // Scenario: cli/cli-arguments / An empty command line stays a no-op
     def "run() does nothing when the command line is empty"() {
         given:
         def runner = newRunner()
@@ -104,6 +106,7 @@ autonomy:
 
     // FR8 of fix-operator-blockers: a non-empty run command line always reaches the parser, so a
     // run with no task is the parser's usage error, not a silent exit 0
+    // Scenario: cli/cli-arguments / A run with no task is a usage error, not a no-op
     def "run() without a task is a usage error for #argv"() {
         given:
         def runner = newRunner()
@@ -122,6 +125,7 @@ autonomy:
 
     // FR8 of fix-operator-blockers: a mistyped option is rejected by name, never skipped by the
     // entrypoint because it named no known flag
+    // Scenario: cli/cli-arguments / A mistyped run flag is not a silent success
     def "run() rejects the unknown option #option of #argv"() {
         given:
         def runner = newRunner()
@@ -159,7 +163,11 @@ autonomy:
 
     // FR14: the 'usage' subcommand routes to UsageCommand, not the run flow
     def "run() dispatches a 'usage' subcommand to UsageCommand"() {
+        // A real clone: since task 9.13g of tighten-spec-contract the touchpoint fetch requires the
+        // clone's ref backend before it writes, so an uninitialized directory is refused as not a
+        // reftable clone — which would make this routing spec red for the wrong reason.
         given:
+        makeProjectRootAGitClone(projectRoot)
         def runner = newRunner()
         def args = new DefaultApplicationArguments('usage', "--dir=${projectRoot}".toString(), 'task-1')
 
@@ -174,7 +182,11 @@ autonomy:
     // failure — run() rethrows TaskNotFoundException silently: no extra System.err line beyond the
     // command's own calm message on System.out, no WARN log, no stack trace.
     def "run() rethrows TaskNotFoundException from a subcommand without any extra stderr output"() {
+        // A real clone: since task 9.13g of tighten-spec-contract the touchpoint fetch requires the
+        // clone's ref backend before it writes, so an uninitialized directory is refused as not a
+        // reftable clone — which would make this routing spec red for the wrong reason.
         given:
+        makeProjectRootAGitClone(projectRoot)
         def runner = newRunner()
         def args = new DefaultApplicationArguments('usage', "--dir=${projectRoot}".toString(), 'task-1')
         def originalErr = System.err
@@ -312,6 +324,7 @@ advancement: auto
     }
 
     // FR1, UX1: a malformed invocation surfaces as UsageException before any pipeline load
+    // Scenario: cli/manual-run / A malformed command line never loads the pipeline
     def "run() throws UsageException for a malformed invocation without touching the pipeline"() {
         given:
         def runner = newRunner()
@@ -327,6 +340,7 @@ advancement: auto
     // FR1, FR7 of make-run-headless: an in-place escalation is a stop like any other — the
     // question is printed and the process exits by the outcome — but with no branch there is no
     // return-path line to print, and stdin is never read (it is closed from the start here).
+    // Scenario: cli/manual-run / An in-place stop records nothing
     def "run() stops an in-place escalation with the question and no return path, without reading stdin"() {
         given:
         writeOneStagePipelineWithStageAttemptLimitOverride()
@@ -361,6 +375,8 @@ advancement: auto
     // FR7, UX4: --mode in-place prints the honest in-memory reminder before the pipeline runs.
     // FR9 of make-run-headless (design D5): the reminder is the constant whole — state in memory
     // only, the task dies with the process, an escalation or checkpoint ends it for good.
+    // Scenario: cli/manual-run / In-place mode needs no git
+    // Scenario: cli/manual-run / In-place reminder
     def "run() prints the in-place mode reminder before running the pipeline"() {
         given:
         writeOneStagePipeline(projectRoot)
@@ -421,6 +437,8 @@ advancement: auto
 
     // FR6, FR7, UX1: --mode git (the default) prints the branch/worktree banner upfront, before
     // the pipeline runs, and never prints the in-place reminder
+    // Scenario: cli/manual-run / Default invocation from the project directory
+    // Scenario: cli/manual-run / Git mode is the default
     def "run() prints the branch and worktree banner before the pipeline runs in git mode"() {
         given:
         makeProjectRootAGitClone(projectRoot)
@@ -463,6 +481,7 @@ advancement: auto
     // FR6, FR7: the clone's own working copy is untouched by a git-mode run — the pipeline ran
     // against the worktree, and the clone stays on whatever branch it started on with no new
     // untracked/modified files
+    // Scenario: cli/manual-run / Clone untouched in git mode
     def "run() in git mode never mutates the --dir clone's working copy"() {
         given:
         makeProjectRootAGitClone(projectRoot)
@@ -631,6 +650,11 @@ advancement: auto
         def rewritten = Files.readString(taskJson).replaceFirst(/"version"\s*:\s*1/, '"version":2')
         Files.writeString(taskJson, rewritten)
         commitAll(worktree, 'bump version')
+
+        and: 'the bump is registered, as a closing transaction would register it'
+        // A reader reads the envelope at the register (design D13 of tighten-spec-contract), so an
+        // unregistered commit above it is not the factory's record and would not be read.
+        registerTip(registeredClone().clonePath(), 'manual-test-badversion')
 
         def originalErr = System.err
         def capturedErr = new ByteArrayOutputStream()

@@ -119,8 +119,8 @@ tracker:
     repo: acme/widgets
 ''')
         commitAll(projectDir)
-        // A real origin remote so BranchPush actually pushes (with none configured, push is a
-        // silent no-op, per BranchPush's own contract) — every task worktree created via `git
+        // A real origin remote so the push actually runs (with none configured, push is a
+        // silent no-op, per every push point's contract) — every task worktree created via `git
         // worktree add` under projectDir inherits this remote from the shared .git. Also the real
         // remote a real take startup/fresh-claim now resolves and refreshes its base against (FR5,
         // FR13 of add-base-ref-resolution), never the clone's local HEAD.
@@ -138,6 +138,8 @@ tracker:
                 new TrackerWiring([github: trackerFactory], MapSecretsProvider.NONE, TrackerValidatorStub.acceptingGithubSource(), VirtualTimeEquipment.create()), SandboxLifecyclePass.NONE, ContainerTakeSupportFixture.hostOnly())
     }
 
+    // Scenario: tracker/tracker-take / Issue closed under a working gnome
+    // Scenario: tracker/tracker-take / Revoked host task keeps its worktree
     def "ready -> claim -> work -> human closes mid-run -> revoked: salvage, push, note, release; branch and worktree kept"() {
         given: 'a Ready task seeded directly in a real tracker, and a two-stage fake-agent-backed pipeline'
         def factoryProperties = FakeAgentSupport.propertiesFor('plain-round')

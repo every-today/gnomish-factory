@@ -2,6 +2,7 @@ package com.github.oinsio.gnomish.app
 
 import com.github.oinsio.gnomish.adapter.git.GitProcessRunner
 import com.github.oinsio.gnomish.adapter.git.GitTaskRepository
+import com.github.oinsio.gnomish.adapter.git.RegisteredBranchFixture
 import com.github.oinsio.gnomish.adapter.git.state.TaskJsonMapper
 import com.github.oinsio.gnomish.app.git.TaskIdSanitizer
 import com.github.oinsio.gnomish.app.lease.ClaimEpochBook
@@ -38,7 +39,7 @@ import spock.lang.TempDir
  *
  * <p>Implements FR10, D10, NFR-C1 of add-claim-heartbeat.
  */
-abstract class TakeParkReconcileLifecycleSpecBase extends Specification implements TwoInstanceTakeFixture {
+abstract class TakeParkReconcileLifecycleSpecBase extends Specification implements TwoInstanceTakeFixture, RegisteredBranchFixture {
 
     protected static final TaskRef REF = new TaskRef('PROJ-1')
 
@@ -70,6 +71,7 @@ abstract class TakeParkReconcileLifecycleSpecBase extends Specification implemen
         writeTwoInstanceProjectFixture()
     }
 
+    // Scenario: tracker/tracker-take / Deferred park is delivered, not re-run
     def "an orphaned park (Escalated branch + pending marker) reconciles as a deferred park, zero engine rounds"() {
         given: 'instance A takes the ref; the single attempt fails quality and the run escalates and parks'
         def exitA = runExitCode(newCommand('instance-a'), takeArgs('take', 'PROJ-1', "--dir=$projectDir"))
@@ -142,6 +144,8 @@ abstract class TakeParkReconcileLifecycleSpecBase extends Specification implemen
         def repository = new GitTaskRepository(new GitProcessRunner(), registeredClone, orphanedHolderEpochs, new VirtualClock())
         repository.recordOutcome(
                 taskId, new TaskOutcome.Escalated(TaskState.atStageStart('build'), new EscalationReport.AttemptsExhausted(1)), TrackerWrite.OWED)
+        // The holder's closing commit, registered as its closing push registers it (design D13).
+        registerTip(registeredClone.clonePath(), taskId)
     }
 
     /**
@@ -154,6 +158,7 @@ abstract class TakeParkReconcileLifecycleSpecBase extends Specification implemen
     private void markPausePending(String taskId) {
         def repository = new GitTaskRepository(new GitProcessRunner(), registeredClone, orphanedHolderEpochs, new VirtualClock())
         repository.recordOutcome(taskId, new TaskOutcome.Paused(TaskState.atStageStart('build'), 'build'), TrackerWrite.OWED)
+        registerTip(registeredClone.clonePath(), taskId)
     }
 
     /**

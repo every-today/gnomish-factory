@@ -62,8 +62,9 @@ final class TakeFreshClaim {
         TaskGit git = wiring.git();
         Path cloneDir = order.run().cloneDir();
 
-        git.worktrees().pruneWorktrees(cloneDir);
+        // The backend check inside harden first: a refused clone gets no worktree-registry write.
         git.branches().harden(cloneDir);
+        git.worktrees().pruneWorktrees(cloneDir);
 
         TaskState notYetStarted = TaskState.atStageStart(
                 order.run().definition().stages().getFirst().name());
@@ -87,7 +88,7 @@ final class TakeFreshClaim {
         RegisteredClone clone = wiring.registeredClone();
         // FR13, D14 of add-base-ref-resolution: the task runs under the definition read from ITS
         // resolved base's law binding, never under the startup one.
-        var law = TaskTierLaw.bind(wiring.assembly(), baseBound.lawBinding(), order);
+        var law = TaskTierLaw.bind(wiring.assembly(), baseBound, order);
         if (law instanceof TaskTierLaw.Parked(TakeResult parked)) {
             return parked;
         }
@@ -112,7 +113,7 @@ final class TakeFreshClaim {
 
         Path worktree = TaskWorktreePath.resolve(clone, taskId);
         TaskRecord content =
-                git.store().readTaskRecord(worktree).orElseThrow(() -> AbsentEnvelope.task(taskId, worktree));
+                git.store().readTaskRecord(worktree, taskId).orElseThrow(() -> AbsentEnvelope.task(taskId, worktree));
         String branchName = TaskIdSanitizer.branchName(taskId);
         var bootstrap = new ResumeBootstrap(
                 taskId,

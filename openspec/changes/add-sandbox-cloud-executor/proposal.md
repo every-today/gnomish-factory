@@ -66,12 +66,12 @@ adapter — the declaration, its filter, and their tests exist once.
   and harvest over cluster APIs, NetworkPolicy egress, PVC cache
   semantics, RuntimeClass, in-cluster Docker ladder, passport,
   cost-critical orphan cleanup.
-- `secrets-provider`: the Vault-class adapter and OIDC federation for
-  remote executors — short-lived credentials, no static secrets outside
-  the operator's trust boundary.
 
 ### Modified Capabilities
 
+- `secrets-provider`: the Vault-class adapter and OIDC federation for
+  remote executors — short-lived credentials, no static secrets outside
+  the operator's trust boundary; the env/file adapter stays the default.
 - `sandbox-egress`: metadata-endpoint block as a mandatory layer-2 rule
   for cloud environments; self-check metadata probe; node-level image
   pulls under cluster registry policy.
@@ -286,6 +286,7 @@ adapter — the declaration, its filter, and their tests exist once.
 - Q6: exact neighbor-declaration subset — whether real stacks (e.g.
   Supabase-class) need healthchecks/start-order fields or the minimal
   subset suffices; decide against concrete stacks during tasks.
+- Q7: after this change archives, the scenario `The env/file adapter is the only adapter` (`operator/secrets-provider`, requirement `Env/file adapter is the zero-infrastructure default`) is wrong, since this change adds a second adapter. Rename it to `The env/file adapter is the default selection` (F64 of `tighten-spec-contract`). Scenario titles cannot be renamed through MODIFIED, so after this change archives the requirement is removed and re-added under the same header by a retire/restore pair of changes, archived back to back (`delta-specs.md`; the earlier pair `retire-misnamed-scenarios` / `restore-renamed-scenarios` is the model). Marker renames and the re-pointing of any pending change that modifies the same requirement ride in the second change of the pair.
 
 ## Impact
 
@@ -302,3 +303,6 @@ adapter — the declaration, its filter, and their tests exist once.
   RuntimeClass bindings, registry endpoint.
 - Depends on change A (port, guard, self-check, git transport); composes
   with change B (gateway/virtual keys); independent of changes C and E.
+- Sequenced after `tighten-spec-contract`: its MODIFIED block of
+  `secrets-provider` ("Env/file adapter is the zero-infrastructure default")
+  is layered on that change's text, which must sync first.

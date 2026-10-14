@@ -50,7 +50,7 @@ class StatusUsageReadOnlySpec extends Specification implements SeededCloneFixtur
         gitOutput(seed, 'push', 'origin', 'HEAD:refs/heads/main')
 
         buildTaskBranch(RegisteredCloneFixture.registered(tempDir.resolve('task-build'), seed), 'PROJ-1')
-        gitOutput(seed, 'push', 'origin', 'gnomish/PROJ-1')
+        gitOutput(seed, 'push', 'origin', 'gnomish/PROJ-1', 'refs/gnomish-factory/PROJ-1')
 
         clone = seedClone(tempDir, bareOrigin.toString(), tempDir.resolve('clone'), '--branch', 'main', '--single-branch')
         registeredClone = RegisteredCloneFixture.registered(tempDir.resolve('home'), clone)
@@ -86,6 +86,7 @@ class StatusUsageReadOnlySpec extends Specification implements SeededCloneFixtur
 
     // FR13, M3: status against a branch not yet fetched locally exercises the narrow-fetch path
     // and mutates nothing else in the clone.
+    // Scenario: cli/task-inspection / Narrow fetch only
     def "M3, FR13: gnomish status on a not-yet-fetched task branch only creates the tracking ref"() {
         given:
         assert !trackingRefExists()
@@ -111,6 +112,7 @@ class StatusUsageReadOnlySpec extends Specification implements SeededCloneFixtur
     }
 
     // FR14, M3: same guarantee for usage.
+    // Scenario: cli/task-inspection / Narrow fetch only
     def "M3, FR14: gnomish usage on a not-yet-fetched task branch only creates the tracking ref"() {
         given:
         assert !trackingRefExists()
@@ -141,6 +143,8 @@ class StatusUsageReadOnlySpec extends Specification implements SeededCloneFixtur
     def "M3, FR13: gnomish status on an already-fetched task branch performs zero mutation, not even a redundant fetch"() {
         given:
         fetchFromOrigin(clone, 'refs/heads/gnomish/PROJ-1:refs/remotes/origin/gnomish/PROJ-1')
+        // The factory register comes with it, as an earlier touchpoint fetch lands it (design D13).
+        fetchFromOrigin(clone, 'refs/gnomish-factory/PROJ-1:refs/gnomish-factory/PROJ-1')
         assert trackingRefExists()
         def trackingShaBefore = gitOutput(clone, 'rev-parse', 'refs/remotes/origin/gnomish/PROJ-1')
         def fetchHeadFile = clone.resolve('.git').resolve('FETCH_HEAD').toFile()

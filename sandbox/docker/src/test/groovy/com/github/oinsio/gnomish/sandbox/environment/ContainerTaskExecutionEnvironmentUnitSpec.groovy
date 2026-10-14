@@ -6,6 +6,7 @@ import com.github.oinsio.gnomish.sandbox.CapabilityPassport
 import com.github.oinsio.gnomish.sandbox.ChildEnvAllowlist
 import com.github.oinsio.gnomish.sandbox.ExecCommand
 import com.github.oinsio.gnomish.sandbox.ResourceLimits
+import com.github.oinsio.gnomish.testfixtures.TestChildEnvironment
 import com.github.oinsio.gnomish.testfixtures.logging.LogCaptureSupport
 import java.nio.charset.StandardCharsets
 import java.nio.file.Path
@@ -35,8 +36,8 @@ class ContainerTaskExecutionEnvironmentUnitSpec extends Specification {
 
     private ContainerTaskExecutionEnvironment env(String image = 'gnomish/img') {
         new ContainerTaskExecutionEnvironment(
-                docker, KEY, new BoxGitLink(SOURCE_CLONE, harvester), new TaskContainerSettings(image, 'runc', LIMITS, false),
-                clock, ChildEnvAllowlist.none(), OWNERSHIP)
+                BoxEquipmentFixture.forBox(docker, image, LIMITS, clock, OWNERSHIP.mode()),
+                KEY, new BoxGitLink(SOURCE_CLONE, harvester), ChildEnvAllowlist.none(), OWNERSHIP.projectId())
     }
 
     def setup() {
@@ -52,6 +53,9 @@ class ContainerTaskExecutionEnvironmentUnitSpec extends Specification {
     static final List<String> IMAGE_INSPECT = DockerCommands.inspectImageVolumes('gnomish/img')
     static final DeclaredVolumeOverrides NO_OVERRIDES = new DeclaredVolumeOverrides([])
 
+    /** The box's git-floor probe that precedes every seed clone (design D13 of tighten-spec-contract). */
+    static final List<String> GIT_PROBE = new BoxGitFloor(new RecordingDockerCli(), KEY, OWNERSHIP).versionProbe('gnomish/img')
+
     /** The shared fake's answer to the image-declared-volume read (FR1 of fix-image-declared-volumes). */
     private static DockerResult declaredVolumes(List<String> args, String answer = 'null') {
         RecordingDockerCli.answerDeclaredVolumes(args, answer)
@@ -62,6 +66,7 @@ class ContainerTaskExecutionEnvironmentUnitSpec extends Specification {
                         KEY, 'gnomish/img', 'runc', LIMITS, false, '/gnomish/work', OWNERSHIP, overrides))
     }
 
+    // Scenario: sandbox/execution-environment / One task, one box
     def "FR3: materialize inspects, then creates network, volume, seed clone, container, scratch dir, in order"() {
         when:
         env().materialize('gnomish/task-x', null)
@@ -69,6 +74,7 @@ class ContainerTaskExecutionEnvironmentUnitSpec extends Specification {
         then:
         docker.runs == [
             INSPECT,
+            GIT_PROBE,
             DockerCommands.createNetwork(KEY, OWNERSHIP),
             DockerCommands.createVolume(KEY, OWNERSHIP),
             DockerCommands.seedClone(KEY, 'gnomish/img', '/factory/project-clone', 'gnomish/task-x', null, OWNERSHIP),
@@ -85,6 +91,8 @@ class ContainerTaskExecutionEnvironmentUnitSpec extends Specification {
     // FR2 of harden-logging-observability: the remote end of a task's lifecycle gets its own INFO
     // anchor at its own choke point. Creating and reattaching mean very different things about
     // what the run started from, so the two are separate words, not one "materialized".
+    // Scenario: sandbox/execution-environment / Image with no declared volumes
+    // Scenario: observability/factory-logging / Container lifecycle is reconstructible
     def "FR2: a fresh materialize logs the creation anchor with the key, branch and image"() {
         given:
         def capture = LogCaptureSupport.attach(ContainerMaterializer)
@@ -105,6 +113,7 @@ class ContainerTaskExecutionEnvironmentUnitSpec extends Specification {
 
     // NFR-O1, UX1, design D7 of fix-image-declared-volumes: what the image's declared paths became
     // rides the creation anchor rather than a line of its own — one lifecycle event, one anchor.
+    // Scenario: sandbox/execution-environment / Operator sees which paths were made ephemeral
     def "NFR-O1: the creation anchor names every declared path the box made ephemeral"() {
         given:
         def capture = LogCaptureSupport.attach(ContainerMaterializer)
@@ -214,6 +223,7 @@ class ContainerTaskExecutionEnvironmentUnitSpec extends Specification {
         then:
         docker.runs == [
             INSPECT,
+            GIT_PROBE,
             DockerCommands.seedClone(KEY, 'gnomish/img', '/factory/project-clone', 'gnomish/task-x', 'pin99', OWNERSHIP),
         ]
     }
@@ -243,7 +253,7 @@ class ContainerTaskExecutionEnvironmentUnitSpec extends Specification {
         env().materialize('gnomish/task-x', null)
 
         then: 'the one-shot helper is --rm, off-network, with the factory clone ro beside the task volume'
-        def seed = docker.runs[3]
+        def seed = docker.runs[4]
         seed[0] == 'run'
         seed.contains('--rm')
         seed.contains('none')
@@ -267,7 +277,7 @@ class ContainerTaskExecutionEnvironmentUnitSpec extends Specification {
         seed.last() == 'gnomish/task-x'
 
         and: 'the task container run mounts only the task volume'
-        def run = docker.runs[5]
+        def run = docker.runs[6]
         run.findAll {
             it.toString().contains(':') && it.toString().contains('/gnomish')
         } ==
@@ -281,7 +291,7 @@ class ContainerTaskExecutionEnvironmentUnitSpec extends Specification {
         env().materialize('gnomish/task-x', 'abc123')
 
         then:
-        def seed = docker.runs[3]
+        def seed = docker.runs[4]
         seed == DockerCommands.seedClone(KEY, 'gnomish/img', '/factory/project-clone', 'gnomish/task-x', 'abc123', OWNERSHIP)
         seed.last() == 'abc123'
         seed[seed.size() - 2] == 'gnomish/task-x'
@@ -305,6 +315,7 @@ class ContainerTaskExecutionEnvironmentUnitSpec extends Specification {
     // FR2, UX1, M2 of polish-sandbox-forensics: an operator diagnosing a failed materialize must
     // be able to paste a name into `docker logs` / `docker cp` straight from the message. M2 is
     // "every touched failure site", so this covers each of the materializer's throw sites, not one.
+    // Scenario: sandbox/execution-environment / Materialize failure names the box
     def "FR2: every materialize failure names the task container ready-to-paste"() {
         given: 'the named management step is the one the daemon refuses'
         docker.onRun = { List<String> args ->
@@ -341,6 +352,7 @@ class ContainerTaskExecutionEnvironmentUnitSpec extends Specification {
     // FR1, FR2, NFR-C1 of fix-image-declared-volumes: the declared-volume read happens once per
     // create, before the run it feeds — the box's paths are occupied by the same argv that starts
     // it, so no window exists in which the daemon could make an anonymous volume for this image.
+    // Scenario: sandbox/execution-environment / Explicit factory mounts are not overridden
     def "FR1: a fresh materialize reads the image's declared volumes once, before the run"() {
         given:
         docker.onRun = { List<String> args ->
@@ -408,6 +420,7 @@ class ContainerTaskExecutionEnvironmentUnitSpec extends Specification {
         image << [null, '', '   ']
     }
 
+    // Scenario: sandbox/execution-environment / One task, one box
     def "NFR-R2: dispose removes container, guard, volume and network"() {
         when:
         env().dispose()
@@ -421,6 +434,7 @@ class ContainerTaskExecutionEnvironmentUnitSpec extends Specification {
         ]
     }
 
+    // Scenario: sandbox/execution-environment / Dispose is idempotent
     def "NFR-R2: dispose is best-effort — one failing step never stops the others or throws"() {
         given:
         docker.onRun = { args ->
@@ -541,15 +555,14 @@ class ContainerTaskExecutionEnvironmentUnitSpec extends Specification {
     // FR9, D6, M3 (task 7.2): the exec child environment is the composed allowlist with an EMPTY
     // container base — passthrough names (values live from the factory environment) plus the
     // factory-set fragment become -e entries; no other factory variable reaches the argv.
+    // Scenario: sandbox/execution-environment / The container base set is empty
     def "FR9: exec passes exactly the composed allowlist as --env entries, with an empty container base"() {
         given: 'an allowlist passing JAVA_HOME through, over a factory env that also holds a noise key'
         def factoryEnv = [JAVA_HOME: '/jdk', AWS_SECRET_ACCESS_KEY: 'never', PATH: '/usr/bin']
-        def allowlist = ChildEnvAllowlist.over(['JAVA_HOME'], [], {
-            -> factoryEnv
-        })
+        def allowlist = ChildEnvAllowlist.of(['JAVA_HOME'], [], TestChildEnvironment.valuesOf(factoryEnv))
         def e = new ContainerTaskExecutionEnvironment(
-                docker, KEY, new BoxGitLink(SOURCE_CLONE, harvester), new TaskContainerSettings('gnomish/img', 'runc', LIMITS, false),
-                clock, allowlist, OWNERSHIP)
+                BoxEquipmentFixture.forBox(docker, 'gnomish/img', LIMITS, clock, OWNERSHIP.mode()),
+                KEY, new BoxGitLink(SOURCE_CLONE, harvester), allowlist, OWNERSHIP.projectId())
         e.materialize('task/x', null)
 
         when: 'an exec with a factory-set fragment starts (the recording fake then stops it)'

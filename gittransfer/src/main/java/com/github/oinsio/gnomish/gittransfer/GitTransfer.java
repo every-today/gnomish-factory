@@ -15,9 +15,10 @@ import java.util.SequencedMap;
 /**
  * One factory git transfer as a value: the argument list from the leading {@code -c} pairs
  * through the refspec (the executable itself excluded), and the environment entries to set (a
- * present value) and to unset (an empty one). Built from exactly two inputs — a {@link
- * TransferSource} and one {@link Refspec} — by {@link #fetch} and {@link #clone}, the only
- * construction sites of a transfer argv in the factory (design D1, D2 of own-git-transfer-argv).
+ * present value) and to unset (an empty one). Built from a {@link TransferSource} and its {@link
+ * Refspec}s by {@link #fetch}, {@link #harvest} and {@link #clone}, and for origin's two pushes by {@link GitPush} —
+ * the only construction sites of a transfer argv in the factory (design D1, D2 of
+ * own-git-transfer-argv; design D13 of tighten-spec-contract).
  * Nothing here launches a process: the git runner applies the value to a {@code ProcessBuilder},
  * the seed helper renders it into its script.
  *
@@ -80,7 +81,8 @@ public record GitTransfer(List<String> argv, SequencedMap<String, Optional<Strin
             "GIT_WORK_TREE",
             "GIT_INDEX_FILE");
 
-    private static final String END_OF_OPTIONS = "--end-of-options";
+    /** Package-private: the push factories of {@link GitPush} place the same terminator. */
+    static final String END_OF_OPTIONS = "--end-of-options";
 
     public GitTransfer {
         argv = List.copyOf(argv);
@@ -88,21 +90,54 @@ public record GitTransfer(List<String> argv, SequencedMap<String, Optional<Strin
     }
 
     /**
-     * A {@code git fetch} of exactly {@code refspec} from {@code source} into the clone the runner
-     * executes it in.
+     * A {@code git fetch} of exactly {@code refspec} — and of each of {@code more}, in one transfer,
+     * so every ref it moves reflects one advertisement of the source — from {@code origin} into the
+     * clone the runner executes it in. A touchpoint fetch names the task branch and the factory
+     * register together this way (FR13 of tighten-spec-contract). A fetch of more than one refspec
+     * passes {@code --atomic}: the branch refspec is unforced and can be rejected as a
+     * non-fast-forward while a forced register lands, and {@code --atomic} makes every ref of the
+     * transfer land together or none (design D13 of tighten-spec-contract, as amended 2026-10-13).
+     * A fetch of one refspec has nothing to pair and keeps the plain form.
      *
-     * @param source the named remote or the container transport; never null
-     * @param refspec the one refspec to move; never null
+     * @param source the named remote; never null
+     * @param refspec the first refspec to move; never null
+     * @param more further refspecs moved by the same transfer, in order; none null
      * @return the transfer value
      */
-    public static GitTransfer fetch(FetchSource source, Refspec refspec) {
+    public static GitTransfer fetch(Origin source, Refspec refspec, Refspec... more) {
         Objects.requireNonNull(source, "source");
         Objects.requireNonNull(refspec, "refspec");
+        List<Refspec> refspecs = new ArrayList<>(List.of(more));
+        refspecs.addFirst(refspec);
+        return fetchFrom(source, refspecs, refspecs.size() > 1);
+    }
+
+    /**
+     * A harvest: a {@code git fetch} of the box's task branch over the container transport into the
+     * task's quarantine and nowhere else (design D18 of tighten-spec-contract). The destination is a
+     * {@link QuarantineRef}, so no harvest built here can name the task branch: the branch moves only
+     * through the git adapter's admission, after it inspected what landed.
+     *
+     * @param source the container transport; never null
+     * @param boxBranch the task branch as the box names it; never null
+     * @param quarantine the task's quarantine; never null
+     * @return the transfer value
+     */
+    public static GitTransfer harvest(Container source, String boxBranch, QuarantineRef quarantine) {
+        Objects.requireNonNull(source, "source");
+        Objects.requireNonNull(quarantine, "quarantine");
+        return fetchFrom(source, List.of(quarantine.harvestRefspec(boxBranch)), false);
+    }
+
+    private static GitTransfer fetchFrom(FetchSource source, List<Refspec> refspecs, boolean atomic) {
         List<String> argv = configPairs();
         argv.add("fetch");
         argv.add("--no-tags");
         argv.add("--no-recurse-submodules");
         argv.add("--no-write-fetch-head");
+        if (atomic) {
+            argv.add("--atomic");
+        }
         String remote =
                 switch (source) {
                     case Origin _ -> {
@@ -113,7 +148,7 @@ public record GitTransfer(List<String> argv, SequencedMap<String, Optional<Strin
                 };
         argv.add(END_OF_OPTIONS);
         argv.add(remote);
-        argv.add(refspec.value());
+        refspecs.forEach(each -> argv.add(each.value()));
         return new GitTransfer(argv, environment(source));
     }
 
@@ -151,7 +186,8 @@ public record GitTransfer(List<String> argv, SequencedMap<String, Optional<Strin
         return argv;
     }
 
-    private static SequencedMap<String, Optional<String>> environment(TransferSource source) {
+    /** Package-private: a push to origin runs under origin's environment, built here once. */
+    static SequencedMap<String, Optional<String>> environment(TransferSource source) {
         SequencedMap<String, Optional<String>> environment = new LinkedHashMap<>();
         for (String variable : STRIPPED) {
             environment.put(variable, Optional.empty());

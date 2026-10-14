@@ -257,6 +257,11 @@ as a bug (kubernetes#119905), not a documentation fix.
   *return* / *release*, `operator-guide-serve.md`, `adapter-author-guide.md`.
 - Sequencing: proposed while `add-base-ref-resolution` is active and touches
   the same two binding classes; applied only after that change archives.
+- Sequencing after `tighten-spec-contract`: this change's MODIFIED blocks of `tracker-take`
+  ("Base infrastructure failure releases the claim outside the abort accounting"),
+  `tracker-port` ("Contract suite covers lease maintenance"), `factory-serve` ("SIGTERM stops
+  cleanly within grace") and `lifecycle/claim-heartbeat` ("Zombie fencing") are layered on that
+  change's text, which must sync first.
 
 ## Open Questions
 
@@ -264,3 +269,4 @@ as a bug (kubernetes#119905), not a documentation fix.
   surfaced to the operator at all beyond DEBUG? Today's proposal says no —
   it is the mechanism working — but the dashboard's outage card could count
   them.
+- Q2: after this change archives, the scenario `Release leaves the abort accounting untouched` (`tracker/tracker-take`, requirement `Base infrastructure failure releases the claim outside the abort accounting`) names the operation this change replaces. Rename it to `Return leaves the abort accounting untouched` (F60 of `tighten-spec-contract`). Scenario titles cannot be renamed through MODIFIED, so after this change archives the requirement is removed and re-added under the same header by a retire/restore pair of changes, archived back to back (`delta-specs.md`; the earlier pair `retire-misnamed-scenarios` / `restore-renamed-scenarios` is the model). Marker renames and the re-pointing of any pending change that modifies the same requirement ride in the second change of the pair.

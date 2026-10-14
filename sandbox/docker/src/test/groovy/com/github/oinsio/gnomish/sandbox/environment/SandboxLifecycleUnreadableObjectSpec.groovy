@@ -2,6 +2,7 @@ package com.github.oinsio.gnomish.sandbox.environment
 
 import com.github.oinsio.gnomish.app.git.ProjectScope
 import com.github.oinsio.gnomish.app.lease.LivenessVerdict
+import com.github.oinsio.gnomish.app.sandboxlifecycle.SkippedVerdictSource
 import com.github.oinsio.gnomish.app.sandboxlifecycle.SweepVerdictCategory
 
 /**
@@ -21,6 +22,7 @@ class SandboxLifecycleUnreadableObjectSpec extends SandboxLifecycleSweepSpecBase
     static final def SCOPE = new ProjectScope(PROJECT, Optional.empty())
     static final String LABELS = 'com.github.oinsio.gnomish.task=t1,com.github.oinsio.gnomish.mode=tracked'
 
+    // Scenario: sandbox/sandbox-lifecycle / Unreadable object still gets a verdict
     def "an enumerated container whose inspect fails leaves the pass with skipped-no-verdict"() {
         given: 'the container is listed, but its timing inspect no longer resolves'
         docker.onRun = { List<String> args ->
@@ -42,6 +44,7 @@ class SandboxLifecycleUnreadableObjectSpec extends SandboxLifecycleSweepSpecBase
         then: 'the object is accounted for, naming the read failure, and nothing was disposed'
         verdicts.size() == 1
         verdicts[0].category() == SweepVerdictCategory.SKIPPED_NO_VERDICT
+        verdicts[0].skipSource() == SkippedVerdictSource.RUNTIME
         verdicts[0].objectName() == 'gnomish-box-t1'
         verdicts[0].reason().contains('could not be read')
 
@@ -73,8 +76,10 @@ class SandboxLifecycleUnreadableObjectSpec extends SandboxLifecycleSweepSpecBase
         then:
         verdicts.size() == 1
         verdicts[0].category() == SweepVerdictCategory.SKIPPED_NO_VERDICT
+        verdicts[0].skipSource() == SkippedVerdictSource.RUNTIME
     }
 
+    // Scenario: sandbox/sandbox-lifecycle / Unreadable object still gets a verdict
     def "an object that vanished between the listing and the inspect is not a degradation"() {
         given: 'the volume is listed, but by inspect time it is gone — and its existence probe agrees'
         docker.onRun = { List<String> args ->
@@ -116,6 +121,7 @@ class SandboxLifecycleUnreadableObjectSpec extends SandboxLifecycleSweepSpecBase
         then:
         verdicts.size() == 1
         verdicts[0].category() == SweepVerdictCategory.SKIPPED_NO_VERDICT
+        verdicts[0].skipSource() == SkippedVerdictSource.RUNTIME
         verdicts[0].objectName() == 'gnomish-vol-t1'
     }
 }

@@ -4,6 +4,7 @@ import com.github.oinsio.gnomish.app.port.git.BranchTipUnavailableException;
 import com.github.oinsio.gnomish.subprocess.Termination;
 import com.github.oinsio.gnomish.untrustedtext.UntrustedParser;
 import java.util.Optional;
+import java.util.regex.Pattern;
 
 /**
  * The one reading of a {@code rev-parse} result that is allowed to become a tip (FR13 of
@@ -29,23 +30,42 @@ import java.util.Optional;
 @UntrustedParser
 final class VerifiedTip {
 
+    /**
+     * The fixed shape of a full object id: 40 lowercase hex characters (SHA-1) or 64 (SHA-256).
+     * Nothing else a resolution prints is a tip.
+     */
+    private static final Pattern OBJECT_ID = Pattern.compile("[0-9a-f]{40}|[0-9a-f]{64}");
+
     private VerifiedTip() {}
 
     /**
      * The tip a resolution established, or empty when it established nothing.
      *
      * @param result the {@code rev-parse} invocation's outcome
-     * @return the trimmed SHA when the command ran to a zero exit and printed one; empty otherwise
+     * @return the trimmed SHA when the command ran to a zero exit and printed exactly one full
+     *     object id; empty otherwise
      */
     static Optional<String> read(GitCommandResult result) {
-        if (result.termination() != Termination.EXITED || result.exitCode() != 0) {
+        if (!result.succeeded()) {
             return Optional.empty();
         }
-        // @UntrustedParser warrant (design D11): the value this yields is git's own object id for
-        //     a revision the factory named; it travels as a revision argument and an equality
-        //     subject, and the reports that name it render it through an exit.
+        // @UntrustedParser warrant (design D11): the value this yields passed the fixed shape of a
+        //     full object id — 40 or 64 lowercase hex characters, checked over the whole trimmed
+        //     answer — so it holds no separator, no control character and no option prefix; it
+        //     travels as a revision argument and an equality subject (F105).
         String tip = result.stdout().forParsing().trim();
-        return tip.isEmpty() ? Optional.empty() : Optional.of(tip);
+        return isObjectId(tip) ? Optional.of(tip) : Optional.empty();
+    }
+
+    /**
+     * Whether {@code value} is exactly one full object id — the shape a resolution must print, and
+     * the one {@link RefTransaction.Update} accepts for a commit it writes into its script.
+     *
+     * @param value the candidate, untrimmed
+     * @return true only for 40 or 64 lowercase hex characters and nothing else
+     */
+    static boolean isObjectId(String value) {
+        return OBJECT_ID.matcher(value).matches();
     }
 
     /**
@@ -56,7 +76,7 @@ final class VerifiedTip {
      * @param result the invocation's outcome
      * @return the trimmed SHA
      * @throws BranchTipUnavailableException if the invocation did not run to its own exit, exited
-     *     non-zero, or printed no ref at all
+     *     non-zero, or printed anything but one full object id
      */
     static String required(String revision, String command, GitCommandResult result) {
         return read(result).orElseThrow(() -> unavailable(revision, command, result));

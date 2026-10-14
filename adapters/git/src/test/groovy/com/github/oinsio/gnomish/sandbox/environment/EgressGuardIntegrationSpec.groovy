@@ -75,6 +75,8 @@ class EgressGuardIntegrationSpec extends Specification implements BareGitRepoFix
         }
     }
 
+    // Scenario: sandbox/sandbox-egress / Ignoring proxy settings goes nowhere
+    // Scenario: sandbox/sandbox-egress / Non-allowlisted host is denied
     def "M2: the self-check passes against a real guard and the denial reads back as a finding"() {
         given: 'the production self-check over the real box, guard, and allowlist'
         def selfCheck = new EnvironmentSelfCheck(env, guard, docker, key, 'runc', [targetIp], REAL_PAUSE)
@@ -103,6 +105,7 @@ class EgressGuardIntegrationSpec extends Specification implements BareGitRepoFix
         secondRound == []
     }
 
+    // Scenario: sandbox/sandbox-egress / Direct DNS query fails
     def "FR7: a direct DNS query to an external resolver gets no answer"() {
         when: 'a process in the box resolves a name against 8.8.8.8 directly, bypassing the guard'
         def handle = env.exec(new ExecCommand(
@@ -180,12 +183,8 @@ class EgressGuardIntegrationSpec extends Specification implements BareGitRepoFix
         commitAll(source)
         gitOutput(source, 'branch', 'task/egress')
         env = new ContainerTaskExecutionEnvironment(
-                docker,
-                key,
-                new BoxGitLink(source, new ContainerHarvestFetch(new GitProcessRunner(), source)),
-                new TaskContainerSettings(EgressProbeImage.ensureBuilt(), 'runc', LIMITS, false),
-                clock,
-                ChildEnvAllowlist.none(), new ObjectOwnership(OwnershipMode.TRACKED, 'proj-1'))
+                BoxEquipmentFixture.forBox(docker, EgressProbeImage.ensureBuilt(), LIMITS, clock),
+                key, new BoxGitLink(source, new ContainerHarvestFetch(new GitProcessRunner(), source)), ChildEnvAllowlist.none(), 'proj-1')
         env.materialize('task/egress', null)
     }
 }

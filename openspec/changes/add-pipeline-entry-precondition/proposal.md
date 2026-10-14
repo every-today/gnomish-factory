@@ -176,6 +176,7 @@ BEFORE the first agent round, and route a red baseline to the project owner.
 - **Q2** — should the probe timeout's classification (red baseline by default)
   become configurable per declaration, mirroring external checks' `timeoutClass`?
   Deferred until a real pipeline needs it.
+- **Q3** — after this change archives, the scenario `state.json has two writers in disjoint windows` (`git/git-task-persistence`, requirement `State directory with one writer per file`) names a number this change makes wrong (it adds a third writer). Rename it to `state.json writers never overlap` (F58 of `tighten-spec-contract`). Scenario titles cannot be renamed through MODIFIED, so after this change archives the requirement is removed and re-added under the same header by a retire/restore pair of changes, archived back to back (`delta-specs.md`; the earlier pair `retire-misnamed-scenarios` / `restore-renamed-scenarios` is the model). Marker renames and the re-pointing of any pending change that modifies the same requirement ride in the second change of the pair.
 
 ## Impact
 
@@ -189,7 +190,10 @@ BEFORE the first agent round, and route a red baseline to the project owner.
   versioned task mapper — never as a flat `baseCommit`), `make-checkpoint-gate-durable`
   (sequenced before this change: both MODIFY `git-task-persistence`'s "State directory
   with one writer per file"; this change's delta is layered on that one's — round-token
-  decision path, attempt `stop` field — and must sync after it), `add-pipeline-routing` (the declaration is part of the pinned
+  decision path, attempt `stop` field — and must sync after it), `tighten-spec-contract`
+  (sequenced before this change: its MODIFIED block of "State directory with one writer
+  per file" is layered on that change's text, which splits the requirement into scenarios),
+  `add-pipeline-routing` (the declaration is part of the pinned
   per-pipeline definition and its content hash; `state.json`/`task.json` fields land
   in the same region), `add-stage-iteration` and `harden-task-branch-contract`
   (additive `state.json` fields under contract v1 — apply order decides version-gate

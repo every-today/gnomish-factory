@@ -1,6 +1,8 @@
 package com.github.oinsio.gnomish.app
 
 import com.github.oinsio.gnomish.adapter.pipeline.TrackerValidatorStub
+import com.github.oinsio.gnomish.app.port.workspace.WorkspaceFactory
+import com.github.oinsio.gnomish.app.workspace.DirectoryWorkspace
 import java.nio.file.Path
 import java.time.Duration
 import spock.lang.Specification
@@ -29,7 +31,9 @@ class HeartbeatConstantsSourceSpec extends Specification {
     @TempDir
     Path gnomeWorktree
 
-    private final PipelineStartup startup = new PipelineStartup(TrackerValidatorStub.acceptingGithubSource())
+    private final PipelineStartup startup = new PipelineStartup(TrackerValidatorStub.acceptingGithubSource(), { Path root ->
+        new DirectoryWorkspace(root)
+    } as WorkspaceFactory)
 
     /**
      * Writes a complete, valid {@code .gnomish/} tree under {@code root} whose
@@ -69,6 +73,8 @@ tracker:
         tracker.heartbeatTtlMultiplier() == 4
     }
 
+    // Scenario: lifecycle/claim-heartbeat / The reaper ticks on the beat interval from the factory's clone
+    // Scenario: lifecycle/claim-heartbeat / Gnome edits to config are inert
     def "FR3/NFR-S1: a gnome's worktree config edit does not change the running instance's beat/TTL"() {
         given: 'the factory clone pins 10m/×4 — the protocol constants for the run'
         writeTree(factoryClone, '10m', 4)

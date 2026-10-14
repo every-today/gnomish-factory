@@ -1,6 +1,7 @@
 package com.github.oinsio.gnomish.serveobservability.writer
 
 import ch.qos.logback.classic.Level
+import com.github.oinsio.gnomish.app.sandboxlifecycle.SkippedVerdictSource
 import com.github.oinsio.gnomish.app.sandboxlifecycle.SweepTickRecord
 import com.github.oinsio.gnomish.app.sandboxlifecycle.SweepVerdict
 import com.github.oinsio.gnomish.app.sandboxlifecycle.SweepVerdictCategory
@@ -48,10 +49,12 @@ class SweepLedgerWriterSpec extends Specification implements RotatingLedgerAppen
     }
 
     private static SweepVerdict verdict(SweepVerdictCategory category, Duration age = Duration.ofMinutes(15)) {
-        new SweepVerdict(category, 'gnomish-task-1-box', 'main-box', 'tracked', 'task-1', 'unowned running', age)
+        new SweepVerdict(category, 'gnomish-task-1-box', 'main-box', 'tracked', 'task-1', 'unowned running', age,
+                category == SweepVerdictCategory.SKIPPED_NO_VERDICT ? SkippedVerdictSource.RUNTIME : null)
     }
 
     // NFR-O2: every stop and dispose becomes one line carrying object, role, task, reason, age.
+    // Scenario: observability/serve-observability / History answers "what was cleaned yesterday"
     def "an acting verdict becomes one sweepAction line"() {
         when:
         writer().onVerdict(verdict(SweepVerdictCategory.STOPPED_ORPHAN))
@@ -83,6 +86,7 @@ class SweepLedgerWriterSpec extends Specification implements RotatingLedgerAppen
 
     // NFR-O2: "untouched objects SHALL never be itemized in the ledger" — an hourly sweep over a
     //     busy host must cost one line per tick, not one per container.
+    // Scenario: observability/serve-observability / Hourly ticks do not flood the ledger
     def "an untouched verdict writes nothing"() {
         when:
         writer().onVerdict(verdict(category))
@@ -99,6 +103,8 @@ class SweepLedgerWriterSpec extends Specification implements RotatingLedgerAppen
     }
 
     // NFR-O2: the tick line carries ALL six counts, including the untouched ones.
+    // Scenario: observability/serve-observability / History answers "what was cleaned yesterday"
+    // Scenario: observability/serve-observability / Hourly ticks do not flood the ledger
     def "a completed tick becomes one sweepTick line carrying every count"() {
         given:
         def record = new SweepTickRecord(
@@ -109,7 +115,8 @@ class SweepLedgerWriterSpec extends Specification implements RotatingLedgerAppen
                 ],
                 [],
                 0,
-                1)
+                1,
+                SkippedVerdictSource.TRACKER)
 
         when:
         writer().onTickCompleted(record)
@@ -129,7 +136,7 @@ class SweepLedgerWriterSpec extends Specification implements RotatingLedgerAppen
         def tickAt = Instant.parse('2026-08-06T08:30:00Z')
 
         when:
-        writer().onTickCompleted(new SweepTickRecord(tickAt, [:], [], 0, 0))
+        writer().onTickCompleted(new SweepTickRecord(tickAt, [:], [], 0, 0, null))
 
         then:
         ledgerLines()[0].contains('"at":"2026-08-06T08:30:00Z"')
@@ -147,7 +154,7 @@ class SweepLedgerWriterSpec extends Specification implements RotatingLedgerAppen
 
         when:
         writer.onVerdict(verdict(SweepVerdictCategory.STOPPED_ORPHAN))
-        writer.onTickCompleted(new SweepTickRecord(NOW, [:], [], 0, 0))
+        writer.onTickCompleted(new SweepTickRecord(NOW, [:], [], 0, 0, null))
 
         then:
         noExceptionThrown()

@@ -41,6 +41,7 @@ class ReplicaPairReconcilerTerminationSpec extends Specification {
         thrown instanceof BranchTipUnavailableException
     }
 
+    // Scenario: build/quality-gates / A termination spec interrupts a blocked call, not a sleep
     def "FR8: an interrupted ancestry probe is unavailability, never DIVERGED — the discard needs a compared pair"() {
         when:
         def thrown = interruptDuring(stallingOn('merge-base'))
@@ -84,7 +85,7 @@ class ReplicaPairReconcilerTerminationSpec extends Specification {
      * to produce on demand.
      */
     private static Map stallingOn(String stalled) {
-        def git = new ScriptedGit()
+        def git = ScriptedGit.reftableClone()
                 .stalls([stalled], new CountDownLatch(1))
                 .answer(['fetch'], 0)
                 .answer(['update-ref'], 0)

@@ -1,6 +1,8 @@
 package com.github.oinsio.gnomish.app
 
 import ch.qos.logback.classic.Level
+import com.github.oinsio.gnomish.app.port.git.BoxGitVersionRefusedException
+import com.github.oinsio.gnomish.app.port.git.CloneRefFormatRefusedException
 import com.github.oinsio.gnomish.app.port.git.GitVersionRefusedException
 import com.github.oinsio.gnomish.app.port.git.UnsupportedStateFileVersionException
 import com.github.oinsio.gnomish.domain.engine.EscalationReport
@@ -88,7 +90,10 @@ class RunExceptionReportingSpec extends Specification implements StdoutCaptureFi
             new InternalErrorException('corrupt branch'),
             new UnsupportedStateFileVersionException('task.json', 2, 1),
             // UX2 of own-git-transfer-argv: the floor refusal reads like a precondition
-            new GitVersionRefusedException('2.45.1', '2.44.0', 'the seed clone relies on it'),
+            new GitVersionRefusedException('2.51.0', '2.50.1', 'the seed clone relies on it'),
+            // D13 of tighten-spec-contract: a factory clone off the reftable backend is a precondition
+            new CloneRefFormatRefusedException('/clones/x', 'reftable', UntrustedText.subprocess('files')),
+            new BoxGitVersionRefusedException('img:1', '2.51.0', UntrustedText.container('git version 2.43.0'), 'why'),
             // FR7 of add-project-registry: the configuration report is its message
             new ConfigurationViolationsException([
                 'factory.x is not a known key'
@@ -101,6 +106,7 @@ class RunExceptionReportingSpec extends Specification implements StdoutCaptureFi
     // take/serve exit carriers are the same shape: the command reported its own outcome and throws
     // only to hand Spring Boot the code (D16 of add-tracker-port) — a completed take is not an
     // unhandled failure.
+    // Scenario: cli/cli-arguments / A completed take is not an unhandled failure
     def "stays silent for a failure the callee already reported"() {
         given:
         def logs = LogCaptureSupport.attach(RunExceptionReportingSpec)
@@ -188,6 +194,7 @@ class RunExceptionReportingSpec extends Specification implements StdoutCaptureFi
 
     // UX3: anything unclassified is the generic fallback — named as a run failure and carrying the
     // cause's message, so an unexpected fault is still legible without a stack trace.
+    // Scenario: cli/cli-arguments / An unclassified fault keeps its trace
     def "reports an unclassified failure as a run failure, carrying its message"() {
         given: 'the reporter logs through the caller-supplied logger, which here is this spec class'
         def logs = LogCaptureSupport.attach(RunExceptionReportingSpec)

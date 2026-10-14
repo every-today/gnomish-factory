@@ -51,6 +51,7 @@ class FetchRefusalOutcomeSpec extends Specification implements BareGitRepoFixtur
         new BaseRefresh(refusingRunner(), VirtualTimeGitRetries.gitInfrastructure())
     }
 
+    // Scenario: git/git-task-persistence / A base object failing validation parks the task
     def "FR5: a #kind base whose fetch fails validation is refused, naming the object, with no probe"() {
         given: 'the clone is behind origin, so the refresh has to fetch'
         assert gitExitCode(clone, 'tag', '-d', 'v1.0') == 0
@@ -115,6 +116,23 @@ class FetchRefusalOutcomeSpec extends Specification implements BareGitRepoFixtur
         recordedSubcommands(fetchLog).count('ls-remote') == 0
 
         and: 'the refusal is deterministic, so the infrastructure budget spends no second fetch on it'
+        recordedSubcommands(fetchLog).count('fetch') == 1
+    }
+
+    // FR13 of tighten-spec-contract (D13, amended 2026-10-13): the tracking ref already present is
+    //     the fallback for an origin that cannot deliver, never for one whose objects failed validation.
+    def "FR5: a refused touchpoint fetch beside a present tracking ref is refused, never fallen back from"() {
+        given: 'the clone already holds the task branch as a tracking ref, fetched by the real git'
+        def taskClone = cloneLackingTaskBranch('tracked', 'PROJ-2')
+        fetchFromOrigin(taskClone, 'refs/heads/gnomish/PROJ-2:refs/remotes/origin/gnomish/PROJ-2')
+
+        when:
+        def location = new TaskBranchLocator(refusingRunner(), VirtualTimeGitRetries.gitInfrastructure())
+                .locate(taskClone, 'PROJ-2')
+
+        then:
+        location instanceof BranchLocation.Refused
+        (location as BranchLocation.Refused).report().contains('gnomish/PROJ-2')
         recordedSubcommands(fetchLog).count('fetch') == 1
     }
 

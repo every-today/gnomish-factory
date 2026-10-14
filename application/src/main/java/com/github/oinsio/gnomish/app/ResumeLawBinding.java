@@ -42,7 +42,10 @@ import org.slf4j.LoggerFactory;
  * held it in — falling back to {@code baseCommit} as a bare SHA (itself a valid {@link
  * BaseRefGit#resolveForResume} input, and a {@link BaseRefKind#COMMIT} by construction) only for a
  * legacy branch created before the structured pin existed, whose {@code task.json} carries no ref
- * at all.
+ * at all. That pin is read at the task's registered commit, never at the branch tip (design D13 of
+ * tighten-spec-contract): both loaders read the record there ({@code TaskStoreGit#readTaskRecord},
+ * the container tip reader), so a pin the gnome rewrites above the register is never what a resume
+ * binds its law from, and ADR 0007's "the pin is final" holds by construction.
  *
  * <p><b>The pinned kind is the namespace the resume fetches</b> (D7, revised 2026-09-10). Handing
  * it to {@link BaseRefGit#resolveForResume} is what keeps a tag pushed later under a pinned
@@ -50,7 +53,7 @@ import org.slf4j.LoggerFactory;
  * answer when the base was first resolved, so re-asking the question every resume could only
  * un-answer it. A pin written without a kind classifies at resume time exactly as before.
  *
- * <p>Implements FR7, FR12, D13 of add-base-ref-resolution.
+ * <p>Implements FR7, FR12, D13 of add-base-ref-resolution; NFR-S2 of tighten-spec-contract.
  */
 final class ResumeLawBinding {
 
@@ -202,30 +205,18 @@ final class ResumeLawBinding {
                 ref.id(),
                 pinnedRef,
                 reason.forLog());
-        releaseBestEffort(tracker, ref);
-        // The reason leaves its carrier through the log exit here rather than at each sink: what is
-        // built is one message the sinks log whole, and minting the composed line keeps the field a
-        // carrier so no sink can take it raw (design D4 of type-untrusted-text). The composed line
-        // is the factory's own sentence around an already-neutralized quote, so it is minted in the
-        // factory's family rather than in the one the quote came from (design D3). The pinned ref
-        // beside it is not untrusted text: PinnedRefGate holds every task.json baseRef to
+        // The pinned ref is not untrusted text: PinnedRefGate holds every task.json baseRef to
         // RefNameSyntax at the read, so a malformed one never reaches this far (NG4, task 12.2 of
         // add-base-ref-resolution).
-        return new TakeResult.InfrastructureUnavailable(
-                UntrustedText.factory("Task " + ref.id() + " claim released (the reaper returns it to Ready after"
-                        + " the claim TTL): origin did not answer the resume refresh of its pinned base ref '"
-                        + pinnedRef + "': " + reason.forLog()));
-    }
-
-    private static void releaseBestEffort(Tracker tracker, TaskRef ref) {
-        try {
-            tracker.release(ref);
-        } catch (RuntimeException unreleased) {
-            log.error(
-                    OperatorEvent.RESUME_BASE_RELEASE_FAILED.head()
-                            + "release failed for task {} whose resume base refresh could not reach origin",
-                    ref.id(),
-                    unreleased);
-        }
+        return ClaimOutageRelease.release(
+                tracker,
+                ref,
+                "the resume refresh of its pinned base ref '" + pinnedRef + "'",
+                reason,
+                unreleased -> log.error(
+                        OperatorEvent.RESUME_BASE_RELEASE_FAILED.head()
+                                + "release failed for task {} whose resume base refresh could not reach origin",
+                        ref.id(),
+                        unreleased));
     }
 }

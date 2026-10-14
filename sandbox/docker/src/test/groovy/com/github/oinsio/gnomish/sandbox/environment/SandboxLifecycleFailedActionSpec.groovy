@@ -1,5 +1,6 @@
 package com.github.oinsio.gnomish.sandbox.environment
 
+import com.github.oinsio.gnomish.app.sandboxlifecycle.SkippedVerdictSource
 import com.github.oinsio.gnomish.app.sandboxlifecycle.SweepVerdictCategory
 
 /**
@@ -21,6 +22,7 @@ class SandboxLifecycleFailedActionSpec extends SandboxLifecycleDecisionSpecBase 
         }
     }
 
+    // Scenario: sandbox/sandbox-lifecycle / A refused removal is not reported as a removal
     def "a failed stop of an unowned running main box is reported as skipped, never as stopped"() {
         when:
         decision.decideContainer(
@@ -29,9 +31,11 @@ class SandboxLifecycleFailedActionSpec extends SandboxLifecycleDecisionSpecBase 
 
         then:
         verdicts[0].category() == SweepVerdictCategory.SKIPPED_NO_VERDICT
+        verdicts[0].skipSource() == SkippedVerdictSource.RUNTIME
         verdicts[0].reason() == 'stop failed: unowned running main-box'
     }
 
+    // Scenario: sandbox/sandbox-lifecycle / A refused removal is not reported as a removal
     def "a failed removal of an unowned guard is reported as skipped, never as disposed"() {
         when:
         decision.decideContainer(
@@ -40,6 +44,7 @@ class SandboxLifecycleFailedActionSpec extends SandboxLifecycleDecisionSpecBase 
 
         then:
         verdicts[0].category() == SweepVerdictCategory.SKIPPED_NO_VERDICT
+        verdicts[0].skipSource() == SkippedVerdictSource.RUNTIME
         verdicts[0].reason() == 'dispose failed: unowned guard'
     }
 
@@ -51,6 +56,7 @@ class SandboxLifecycleFailedActionSpec extends SandboxLifecycleDecisionSpecBase 
 
         then:
         verdicts[0].category() == SweepVerdictCategory.SKIPPED_NO_VERDICT
+        verdicts[0].skipSource() == SkippedVerdictSource.RUNTIME
         verdicts[0].reason() == 'dispose failed: unowned remnant, past reap threshold'
     }
 
@@ -72,11 +78,13 @@ class SandboxLifecycleFailedActionSpec extends SandboxLifecycleDecisionSpecBase 
         then:
         noExceptionThrown()
         verdicts[0].category() == SweepVerdictCategory.SKIPPED_NO_VERDICT
+        verdicts[0].skipSource() == SkippedVerdictSource.RUNTIME
         verdicts[0].reason() == 'dispose failed: unowned remnant, past reap threshold'
     }
 
     // The same throw on an object the runtime nevertheless removed: the verdict follows the object,
     // not the exception — a dispose that took is reported as a disposal even when the port blew up.
+    // Scenario: sandbox/sandbox-lifecycle / Disposal of an already-gone environment is a no-op
     def "a disposal port that throws after the object is gone still reports the disposal"() {
         given:
         disposal.dispose(_) >> {
@@ -104,6 +112,7 @@ class SandboxLifecycleFailedActionSpec extends SandboxLifecycleDecisionSpecBase 
 
         then:
         verdicts[0].category() == SweepVerdictCategory.SKIPPED_NO_VERDICT
+        verdicts[0].skipSource() == SkippedVerdictSource.RUNTIME
         verdicts[0].reason() == 'dispose failed: unowned remnant, past reap threshold'
     }
 }

@@ -37,6 +37,9 @@ import spock.lang.TempDir
  */
 class GitTaskStoreSpec extends Specification implements BareGitRepoFixture, TaskSeedFixture, StalledReadGit {
 
+    /** One envelope read: the task's register, then the file at the registered commit. */
+    private static final List<String> READ = ['rev-parse', 'show']
+
     @TempDir
     Path tempDir
 
@@ -95,8 +98,8 @@ class GitTaskStoreSpec extends Specification implements BareGitRepoFixture, Task
         def state = seedTask('PROJ-3', 'Fix it')
 
         when:
-        def read = store.readRecordedState(worktreeFor('PROJ-3'))
-        def record = store.readTaskRecord(worktreeFor('PROJ-3'))
+        def read = store.readRecordedState(worktreeFor('PROJ-3'), 'PROJ-3')
+        def record = store.readTaskRecord(worktreeFor('PROJ-3'), 'PROJ-3')
 
         then:
         read == Optional.of(state)
@@ -104,13 +107,14 @@ class GitTaskStoreSpec extends Specification implements BareGitRepoFixture, Task
         record.get().context().title().forLog() == 'Fix it'
     }
 
+    // Scenario: git/git-task-persistence / Absence and unavailability are distinct answers
     def "FR1 of fix-envelope-medium: an envelope the tip does not carry reads as empty, not as a fault"() {
         given: 'a worktree on a branch whose tip never carried a task envelope'
         def worktree = addWorktree(cloneDir, tempDir.resolve('plain'), 'plain')
 
         expect: 'absence is a value — the routing decision it feeds belongs to the caller, not to a cause chain'
-        store.readRecordedState(worktree) == Optional.empty()
-        store.readTaskRecord(worktree) == Optional.empty()
+        store.readRecordedState(worktree, 'PLAIN-1') == Optional.empty()
+        store.readTaskRecord(worktree, 'PLAIN-1') == Optional.empty()
     }
 
     def "FR1 of fix-envelope-medium: a worktree file that differs from the tip does not move the answer"() {
@@ -124,9 +128,10 @@ class GitTaskStoreSpec extends Specification implements BareGitRepoFixture, Task
         assert Files.readString(onDisk).contains('verify')
 
         expect: 'the tip wins: the read answers what the branch records, not what the working copy holds'
-        store.readRecordedState(worktree) == Optional.of(state)
+        store.readRecordedState(worktree, 'PROJ-8') == Optional.of(state)
     }
 
+    // Scenario: git/git-task-persistence / A stale worktree does not change what resume reads
     def "readTaskRecord answers the tip when a killed predecessor removed the envelope from the worktree"() {
         given: 'FR1 of fix-envelope-medium: a completed task whose tip carries the Completed envelope'
         def state = seedTask('PROJ-6', 'Fix it')
@@ -138,13 +143,14 @@ class GitTaskStoreSpec extends Specification implements BareGitRepoFixture, Task
         assert runner.run(worktree, 'show', 'HEAD:.gnomish-task/task.json').exitCode() == 0
 
         when:
-        def record = store.readTaskRecord(worktree)
+        def record = store.readTaskRecord(worktree, 'PROJ-6')
 
         then: 'the read resolves at HEAD, so it answers what the branch records — not what the disk happens to hold'
         record.get().context().taskId() == 'PROJ-6'
         record.get().outcome() instanceof RecordedOutcome.Completed
     }
 
+    // Scenario: git/git-task-persistence / Absence and unavailability are distinct answers
     def "NFR-R2 of fix-envelope-medium: a read cut off before git exits is unavailability, never absence"() {
         given: 'a git that blocks on every read, so the read can only end on an interrupt'
         Path stallDir = Files.createDirectories(tempDir.resolve('stall'))
@@ -154,7 +160,7 @@ class GitTaskStoreSpec extends Specification implements BareGitRepoFixture, Task
         Throwable thrown = null
         def reader = new Thread({
             try {
-                stalled.readTaskRecord(stallDir)
+                stalled.readTaskRecord(stallDir, 'PROJ-1')
             } catch (Throwable t) {
                 thrown = t
             }
@@ -168,7 +174,10 @@ class GitTaskStoreSpec extends Specification implements BareGitRepoFixture, Task
         thrown instanceof BranchTipUnavailableException
     }
 
-    def "NFR-P1 of fix-envelope-medium: each read is one git invocation and reads no file from the worktree"() {
+    // NFR-P1 of fix-envelope-medium, as FR13 of tighten-spec-contract moved the read to the
+    //     registered commit: the register names the commit and one show reads the file there —
+    //     still no file read from the worktree.
+    def "NFR-P1 of fix-envelope-medium: each read resolves the register and shows one file, reading no file from the worktree"() {
         given:
         seedTask('PROJ-7', 'Fix it')
         def worktree = worktreeFor('PROJ-7')
@@ -179,18 +188,18 @@ class GitTaskStoreSpec extends Specification implements BareGitRepoFixture, Task
         assert runner.run(worktree, 'rm', '-r', EnvelopePaths.DIR_NAME).exitCode() == 0
 
         when:
-        def record = counting.readTaskRecord(worktree)
+        def record = counting.readTaskRecord(worktree, 'PROJ-7')
 
         then:
         record.get().context().taskId() == 'PROJ-7'
-        recordedSubcommands(log) == ['show']
+        recordedSubcommands(log) == READ
 
         when:
-        def state = counting.readRecordedState(worktree)
+        def state = counting.readRecordedState(worktree, 'PROJ-7')
 
         then:
         state.isPresent()
-        recordedSubcommands(log) == ['show', 'show']
+        recordedSubcommands(log) == READ + READ
     }
 
     def "usageHistory delegates to UsageHistoryWalker and returns the walked history"() {

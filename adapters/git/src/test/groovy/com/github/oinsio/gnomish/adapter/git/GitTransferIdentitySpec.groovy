@@ -36,6 +36,13 @@ class GitTransferIdentitySpec extends Specification implements TransferAdversary
         AdversarialGitConfig.assertInEffect(runner)
     }
 
+    // Scenario: git/git-task-persistence / A populated submodule does not widen the refresh
+    // Scenario: git/git-transfer / A tag inside the fetched history stays out
+    // Scenario: git/git-transfer / A populated submodule is not fetched
+    // Scenario: git/git-transfer / FETCH_HEAD is untouched
+    // Scenario: git/git-transfer / Configured fetch refspecs move nothing
+    // Scenario: git/git-transfer / An operator config enabling recursion changes nothing
+    // Scenario: git/git-transfer / Ref diff equals the named destination
     def "FR12 origin: a fetch from origin changes exactly the named tracking ref"() {
         given: "the operator's clone, one commit behind origin with a decoy tag under the branch's name"
         Path clone = initWorkingRepo(tempDir, 'clone')
@@ -89,6 +96,7 @@ class GitTransferIdentitySpec extends Specification implements TransferAdversary
     // FR4, NFR-S2: the allowlist for origin omits ext, and git applies it after the operator's URL
     //     rewrite — so the committed insteadOf onto an ext:: command (design D11) is refused rather
     //     than run, whatever the operator's global file says.
+    // Scenario: git/git-transfer / Origin cannot use the container transport
     def "FR4 origin: an ext:: URL substituted by the operator's rewrite is refused, and its command never runs"() {
         given: "a clone whose origin URL is the sentinel host the operator's configuration rewrites onto ext::"
         Path clone = initWorkingRepo(tempDir, 'rewritten')
@@ -111,7 +119,16 @@ class GitTransferIdentitySpec extends Specification implements TransferAdversary
     // NFR-S1, NFR-S3, NFR-P1: the box is an ext:: command standing in for docker exec (the argv is
     //     otherwise the harvest's), its refs and tags are the gnome's, and the operator's clone
     //     holds a same-name tag the fetch must neither follow nor clobber.
-    def "FR12 container: a harvest from a box changes exactly the task branch, spends one session, and refuses a symlinked .gitmodules"() {
+    // Scenario: git/git-task-persistence / A box-authored submodule or configuration changes nothing
+    // Scenario: git/git-task-persistence / A box-authored tag does not cross the boundary
+    // Scenario: git/git-task-persistence / The harvest reads no operator configuration
+    // Scenario: git/git-transfer / FETCH_HEAD is untouched
+    // Scenario: git/git-transfer / A malformed .gitmodules from the box is refused
+    // Scenario: git/git-transfer / Validation cost is local
+    // Scenario: git/git-transfer / A harvest sees no operator configuration at all
+    // Scenario: git/git-transfer / Ref diff equals the named destination
+    // Scenario: git/git-task-persistence / The branch moves only through the admission
+    def "FR12 container: a harvest from a box changes exactly the quarantine, spends one session, and refuses a symlinked .gitmodules"() {
         given: "the operator's clone on main, with the task branch and a tag of the name the box will also use"
         Path clone = initWorkingRepo(tempDir, 'operator')
         commit(clone, 'a.txt', 'first')
@@ -135,17 +152,18 @@ class GitTransferIdentitySpec extends Specification implements TransferAdversary
         assert !Files.exists(clone.resolve('.git/FETCH_HEAD'))
 
         when: "the owner's Container fetch, in the harvest's refspec shape"
-        def result = runner.run(clone, GitTransfer.fetch(source, new Refspec("${BRANCH}:${BRANCH}")))
+        def result = runner.run(clone, GitTransfer.harvest(source, BRANCH, FactoryRegister.quarantine('task-1')))
 
         then:
         result.exitCode() == 0
 
-        and: 'the diff of the clone\'s refs is exactly the task branch, now at the box\'s tip'
+        and: 'the diff of the clone\'s refs is exactly the quarantine, now at the box\'s tip — never the task branch'
         Map<String, String> refsAfter = refs(clone)
         changedRefs(refsBefore, refsAfter) == [
-            "refs/heads/${BRANCH}".toString()
+            'refs/gnomish-quarantine/task-1'
         ] as Set
-        refsAfter["refs/heads/${BRANCH}"] == boxTip
+        refsAfter['refs/gnomish-quarantine/task-1'] == boxTip
+        refsAfter["refs/heads/${BRANCH}"] == refsBefore["refs/heads/${BRANCH}"]
         refsAfter['refs/tags/inside'] == refsBefore['refs/tags/inside']
         !refsAfter.containsKey('refs/tags/only-in-box')
 
@@ -162,7 +180,7 @@ class GitTransferIdentitySpec extends Specification implements TransferAdversary
 
         when: 'the box plants a .gitmodules that is a symbolic link on the task branch, and the harvest runs again'
         plantGitmodulesSymlink(box)
-        def refused = runner.run(clone, GitTransfer.fetch(source, new Refspec("${BRANCH}:${BRANCH}")))
+        def refused = runner.run(clone, GitTransfer.harvest(source, BRANCH, FactoryRegister.quarantine('task-1')))
 
         then: 'git refuses it, the refusal parses to the validation message id, and the branch ref is unchanged'
         refused.exitCode() != 0
@@ -175,6 +193,9 @@ class GitTransferIdentitySpec extends Specification implements TransferAdversary
 
     // FR7, NFR-S3: the seed clone runs over git's transport path, so the operator's tags stay out,
     //     every object is validated, and no helper of the operator's is consulted.
+    // Scenario: git/git-task-persistence / Operator tags do not enter the box
+    // Scenario: git/git-task-persistence / The seed clone takes the transport path
+    // Scenario: git/git-transfer / Ref diff equals the named destination
     def "FR12 seed: a seed clone holds exactly the branch and its tracking ref, no tag, and refuses a bad object"() {
         given: "the factory clone on the task branch, with a lightweight and an annotated tag on its tip"
         Path factory = initWorkingRepo(tempDir, 'factory')

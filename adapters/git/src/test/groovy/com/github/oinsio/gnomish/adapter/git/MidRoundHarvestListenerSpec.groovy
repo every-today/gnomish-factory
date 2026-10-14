@@ -3,9 +3,11 @@ package com.github.oinsio.gnomish.adapter.git
 import ch.qos.logback.classic.Level
 import com.github.oinsio.gnomish.app.port.agent.AgentProgressEvent
 import com.github.oinsio.gnomish.domain.engine.fake.VirtualClock
+import com.github.oinsio.gnomish.gittransfer.GitTransfer
 import com.github.oinsio.gnomish.logtext.RepeatSuppressor
 import com.github.oinsio.gnomish.operatorevent.OperatorEvent
 import com.github.oinsio.gnomish.sandbox.TaskExecutionEnvironment
+import com.github.oinsio.gnomish.subprocess.Termination
 import com.github.oinsio.gnomish.testfixtures.logging.LogCaptureSupport
 import com.github.oinsio.gnomish.untrustedtext.UntrustedText
 import java.nio.file.Path
@@ -52,6 +54,10 @@ class MidRoundHarvestListenerSpec extends Specification implements PlumbingCommi
         clone = initWorkingRepo(tempDir, 'factory-clone')
         commit(clone, 'a.txt', 'first')
         gitOutput(clone, 'branch', BRANCH)
+        // The round opens on a registered closing commit, and the box's branch starts there: a
+        // harvest of an unchanged box lands the branch tip in the quarantine.
+        gitOutput(clone, 'update-ref', 'refs/gnomish-factory/PROJ-9', 'refs/heads/' + BRANCH)
+        gitOutput(clone, 'update-ref', 'refs/gnomish-quarantine/PROJ-9', 'refs/heads/' + BRANCH)
         origin = initBareRepo(tempDir, 'origin.git')
         addRemote(clone, 'origin', origin.toString())
     }
@@ -63,21 +69,25 @@ class MidRoundHarvestListenerSpec extends Specification implements PlumbingCommi
     private MidRoundHarvestListener listener(
             TaskExecutionEnvironment env,
             Duration interval = MIN_INTERVAL,
-            MidRoundPollContext context = new MidRoundPollContext('PROJ-9', BRANCH, suppressor)) {
-        new MidRoundHarvestListener(env, runner, clone, clock, interval, context)
+            MidRoundPollContext context = new MidRoundPollContext('PROJ-9', BRANCH, suppressor),
+            GitRunner admissionRunner = runner) {
+        new MidRoundHarvestListener(env, new HarvestAdmission(admissionRunner, clone), gitOutput(clone, 'rev-parse', 'refs/heads/' + BRANCH),
+                AdmissionRule.midRound(new com.github.oinsio.gnomish.domain.engine.AttemptKey('PROJ-9', 'implement', 0), com.github.oinsio.gnomish.app.port.git.RoundToken.of('a' * 40)), clock, interval, context)
     }
 
+    // Scenario: git/git-task-persistence / Mid-round tip movement in a box is pushed
     def "FR5: a moved harvested tip is pushed best-effort to origin"() {
         given: 'an environment whose harvest lands one new commit on the branch'
         String pushed = null
         def l = listener(environment({
-            pushed = advanceBranch(clone, BRANCH, 'in-box commit')
+            pushed = harvestLands(clone, 'PROJ-9', 'in-box commit')
         }))
 
         when:
         l.onProgress(toolEvent)
 
-        then: 'origin now has the branch at the harvested tip'
+        then: 'the admission moved the branch to the harvested tip, and origin has it'
+        gitOutput(clone, 'rev-parse', 'refs/heads/' + BRANCH) == pushed
         gitOutput(origin, 'rev-parse', 'refs/heads/' + BRANCH) == pushed
     }
 
@@ -92,6 +102,7 @@ class MidRoundHarvestListenerSpec extends Specification implements PlumbingCommi
         runner.run(origin, 'rev-parse', '--verify', 'refs/heads/' + BRANCH).exitCode() != 0
     }
 
+    // Scenario: git/git-task-persistence / Tip observation is a rate-limited factory-side poll
     def "FR5: polls inside the rate-limit window are skipped — the box cannot cause a fetch storm"() {
         given:
         def harvests = 0
@@ -129,11 +140,13 @@ class MidRoundHarvestListenerSpec extends Specification implements PlumbingCommi
         harvests == 2
     }
 
-    def "FR5: a refused harvest skips the push and never throws — the round boundary keeps the verdict"() {
+    // Scenario: git/git-task-persistence / A failed harvest skips the push
+    // Scenario: git/git-task-persistence / A refused mid-round harvest leaves the verdict to the round boundary
+    def "FR5: a failed harvest skips the push and never throws — the round boundary keeps the verdict"() {
         given:
         def l = listener(environment({
-            advanceBranch(clone, BRANCH, 'in-box commit')
-            throw new HarvestRefusedException(BRANCH, UntrustedText.subprocess('non-fast-forward'))
+            harvestLands(clone, 'PROJ-9', 'in-box commit')
+            throw new HarvestFailedException(BRANCH, UntrustedText.subprocess('transport gone'))
         }))
 
         when:
@@ -153,7 +166,7 @@ class MidRoundHarvestListenerSpec extends Specification implements PlumbingCommi
     def "FR4, UX3: an environment that cannot be harvested all round is announced once, then counted"() {
         given: 'a harvest that fails on every poll of the round'
         def l = listener(environment({
-            throw new HarvestRefusedException(BRANCH, UntrustedText.subprocess('non-fast-forward'))
+            throw new HarvestFailedException(BRANCH, UntrustedText.subprocess('transport gone'))
         }))
         def logs = LogCaptureSupport.attach(MidRoundHarvestListener, Level.DEBUG)
 
@@ -168,7 +181,7 @@ class MidRoundHarvestListenerSpec extends Specification implements PlumbingCommi
         warnings.size() == 1
         warnings[0].formattedMessage.startsWith(OperatorEvent.MID_ROUND_POLL_SKIPPED.head())
         warnings[0].formattedMessage.contains('taskId=PROJ-9')
-        warnings[0].throwableProxy.className == HarvestRefusedException.name
+        warnings[0].throwableProxy.className == HarvestFailedException.name
 
         and: 'the other four polls are diagnosis-only and carry the running count'
         def repeats = logs.list.findAll { it.level == Level.DEBUG }
@@ -221,7 +234,7 @@ class MidRoundHarvestListenerSpec extends Specification implements PlumbingCommi
     def "FR15: a harvest still failing past the roll-up interval is announced again, with its count"() {
         given: 'a harvest that fails on every poll of the round'
         def l = listener(environment({
-            throw new HarvestRefusedException(BRANCH, UntrustedText.subprocess('non-fast-forward'))
+            throw new HarvestFailedException(BRANCH, UntrustedText.subprocess('transport gone'))
         }))
         def logs = LogCaptureSupport.attach(MidRoundHarvestListener, Level.DEBUG)
 
@@ -243,7 +256,7 @@ class MidRoundHarvestListenerSpec extends Specification implements PlumbingCommi
         // exactly the roll-up interval.
         rollUps[0].formattedMessage.contains('over PT5M')
         rollUps[0].formattedMessage.contains('taskId=PROJ-9')
-        rollUps[0].throwableProxy.className == HarvestRefusedException.name
+        rollUps[0].throwableProxy.className == HarvestFailedException.name
 
         cleanup:
         logs.detach()
@@ -257,7 +270,7 @@ class MidRoundHarvestListenerSpec extends Specification implements PlumbingCommi
         def otherBranch = 'gnomish/PROJ-10'
         gitOutput(clone, 'branch', otherBranch)
         def failing = environment({
-            throw new HarvestRefusedException(BRANCH, UntrustedText.subprocess('non-fast-forward'))
+            throw new HarvestFailedException(BRANCH, UntrustedText.subprocess('transport gone'))
         })
 
         and: 'the first round has already spent a failure — captured, so no WARN escapes unwatched'
@@ -283,7 +296,7 @@ class MidRoundHarvestListenerSpec extends Specification implements PlumbingCommi
         def refuse = true
         def l = listener(environment({
             if (refuse) {
-                throw new HarvestRefusedException(BRANCH, UntrustedText.subprocess('non-fast-forward'))
+                throw new HarvestFailedException(BRANCH, UntrustedText.subprocess('transport gone'))
             }
         }))
         def logs = LogCaptureSupport.attach(MidRoundHarvestListener)
@@ -301,5 +314,122 @@ class MidRoundHarvestListenerSpec extends Specification implements PlumbingCommi
 
         cleanup:
         logs.detach()
+    }
+
+    // Scenario: git/git-task-persistence / A refused mid-round harvest leaves the verdict to the round boundary
+    def "FR13: a harvested range the admission refuses moves nothing, pushes nothing, and is announced once"() {
+        given: 'a harvest whose in-box commit carries a service subject'
+        def branchBefore = gitOutput(clone, 'rev-parse', 'refs/heads/' + BRANCH)
+        def l = listener(environment({
+            harvestLands(clone, 'PROJ-9', 'gnomish: cleanup')
+        }))
+
+        when:
+        def events = LogCaptureSupport.capture(MidRoundHarvestListener, Level.WARN) {
+            l.onProgress(toolEvent)
+        }
+
+        then: 'the branch is where it was, and origin never saw it'
+        noExceptionThrown()
+        gitOutput(clone, 'rev-parse', 'refs/heads/' + BRANCH) == branchBefore
+        runner.run(origin, 'rev-parse', '--verify', 'refs/heads/' + BRANCH).exitCode() != 0
+
+        and:
+        events.size() == 1
+        events[0].formattedMessage.startsWith(OperatorEvent.MID_ROUND_POLL_SKIPPED.head())
+        events[0].formattedMessage.contains('mid-round admission')
+    }
+
+    def "FR13: a range the admission could not judge is announced once, and its recovery after it"() {
+        given: 'an admission whose register disappears, then comes back'
+        def l = listener(environment({
+            harvestLands(clone, 'PROJ-9', 'in-box commit')
+        }))
+        def registered = gitOutput(clone, 'rev-parse', 'refs/gnomish-factory/PROJ-9')
+        gitOutput(clone, 'update-ref', '-d', 'refs/gnomish-factory/PROJ-9')
+        def logs = LogCaptureSupport.attach(MidRoundHarvestListener)
+
+        when:
+        l.onProgress(toolEvent)
+        gitOutput(clone, 'update-ref', 'refs/gnomish-factory/PROJ-9', registered)
+        clock.advance(Duration.ofMinutes(1))
+        l.onProgress(toolEvent)
+
+        then:
+        logs.list.findAll { it.level == Level.WARN }.size() == 1
+        logs.list.find {
+            it.level == Level.INFO
+        }.formattedMessage.contains('mid-round admission recovered')
+
+        cleanup:
+        logs.detach()
+    }
+
+    def "FR13: an admission read cut off before git answered is one suppressed line, never a throw"() {
+        given: 'a harvest that lands a commit, and an admission whose register read is interrupted'
+        def branchBefore = gitOutput(clone, 'rev-parse', 'refs/heads/' + BRANCH)
+        def l = listener(environment({
+            harvestLands(clone, 'PROJ-9', 'in-box commit')
+        }), MIN_INTERVAL, new MidRoundPollContext('PROJ-9', BRANCH, suppressor), new RegisterReadCutOff(runner))
+
+        when:
+        def events = LogCaptureSupport.capture(MidRoundHarvestListener, Level.WARN) {
+            l.onProgress(toolEvent)
+        }
+
+        then: 'nothing moved, and the poll reported the read through its own suppressed line'
+        noExceptionThrown()
+        gitOutput(clone, 'rev-parse', 'refs/heads/' + BRANCH) == branchBefore
+        events.size() == 1
+        events[0].formattedMessage.startsWith(OperatorEvent.MID_ROUND_POLL_SKIPPED.head())
+        events[0].formattedMessage.contains('mid-round admission')
+    }
+
+    def "FR13: a range the admission could not judge is judged again on the next poll, without a new gnome commit"() {
+        given: 'one in-box commit, harvested once; the register is missing at the first poll'
+        String landed = null
+        def l = listener(environment({
+            if (landed == null) {
+                landed = harvestLands(clone, 'PROJ-9', 'in-box commit')
+            }
+        }))
+        def registered = gitOutput(clone, 'rev-parse', 'refs/gnomish-factory/PROJ-9')
+        gitOutput(clone, 'update-ref', '-d', 'refs/gnomish-factory/PROJ-9')
+
+        when: 'the register comes back and the next poll sees the same harvested tip'
+        l.onProgress(toolEvent)
+        gitOutput(clone, 'update-ref', 'refs/gnomish-factory/PROJ-9', registered)
+        clock.advance(Duration.ofMinutes(1))
+        l.onProgress(toolEvent)
+
+        then: 'the same range is admitted and pushed'
+        gitOutput(clone, 'rev-parse', 'refs/heads/' + BRANCH) == landed
+        gitOutput(origin, 'rev-parse', 'refs/heads/' + BRANCH) == landed
+    }
+
+    /** A runner whose read of the task's register is cut off before git answered. */
+    private static final class RegisterReadCutOff implements GitRunner {
+        private final GitRunner real
+
+        RegisterReadCutOff(GitRunner real) {
+            this.real = real
+        }
+
+        @Override
+        GitCommandResult run(Path cwd, String... args) {
+            args[0] == 'rev-parse' && args[-1] == 'refs/gnomish-factory/PROJ-9'
+                    ? GitCommandResult.of(130, '', '', Termination.INTERRUPTED)
+                    : real.run(cwd, args)
+        }
+
+        @Override
+        GitCommandResult run(Path cwd, GitTransfer transfer) {
+            real.run(cwd, transfer)
+        }
+
+        @Override
+        GitCommandResult run(Path cwd, RefTransaction transaction) {
+            real.run(cwd, transaction)
+        }
     }
 }

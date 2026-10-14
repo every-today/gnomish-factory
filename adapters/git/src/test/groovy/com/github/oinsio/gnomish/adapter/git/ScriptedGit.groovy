@@ -73,6 +73,18 @@ final class ScriptedGit implements GitRunner {
     private final List<Row> rows = new CopyOnWriteArrayList<>()
     private final List<Call> calls = new CopyOnWriteArrayList<>()
 
+    /**
+     * A git over a factory clone on the reftable ref backend: its first row answers the backend
+     * check every touchpoint fetch makes before it writes ({@link FactoryCloneRefFormat}), so a
+     * spec of a touchpoint scripts only what it is about.
+     */
+    static ScriptedGit reftableClone() {
+        new ScriptedGit().answer([
+            'rev-parse',
+            '--show-ref-format'
+        ], 0, FactoryCloneRefFormat.REQUIRED + '\n')
+    }
+
     /** Answers every invocation starting with {@code prefix} with {@code result}. */
     ScriptedGit answer(List<String> prefix, GitCommandResult result) {
         rows << new Row(prefix, { result })
@@ -132,6 +144,16 @@ final class ScriptedGit implements GitRunner {
     @Override
     GitCommandResult run(Path cwd, GitTransfer transfer) {
         answerFor(new Call(cwd, transfer.argv()))
+    }
+
+    /**
+     * A ref transaction arrives as its argv, {@code update-ref --stdin}, followed by the script's
+     * lines as further words — so a row can match the transaction by its prefix and a spec can
+     * assert which refs it moved.
+     */
+    @Override
+    GitCommandResult run(Path cwd, RefTransaction transaction) {
+        answerFor(new Call(cwd, RefTransaction.ARGV + new String(transaction.script(), 'UTF-8').readLines()))
     }
 
     /** Every invocation so far, in order. */

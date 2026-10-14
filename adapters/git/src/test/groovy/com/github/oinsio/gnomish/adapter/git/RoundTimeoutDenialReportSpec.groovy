@@ -58,7 +58,7 @@ import spock.lang.TempDir
  *
  * <p>Implements FR1, FR2, NFR-O1, UX1, M1 of fix-denial-attribution-durability.
  */
-class RoundTimeoutDenialReportSpec extends Specification implements BareGitRepoFixture {
+class RoundTimeoutDenialReportSpec extends Specification implements BareGitRepoFixture, RegisteredBranchFixture {
 
     private static final String TASK_ID = 'manual-20260716-143502-t1'
 
@@ -79,6 +79,8 @@ class RoundTimeoutDenialReportSpec extends Specification implements BareGitRepoF
         registeredClone = RegisteredCloneFixture.registered(tempDir.resolve('home'), cloneDir)
     }
 
+    // Scenario: observability/status-report / A hung round's blocked exfiltration is visible
+    // Scenario: sandbox/sandbox-egress / Denied exfiltration attempt of a hung round reaches the report
     def "M1: a round killed on its round timeout shows its egress denial under the escalation in both documents"() {
         given: 'a round the guard blocked, then the round timeout killed before it could close'
         def denial = Denial.unidentified(new Finding(
@@ -91,6 +93,7 @@ class RoundTimeoutDenialReportSpec extends Specification implements BareGitRepoF
         def repository = new GitTaskRepository(runner, registeredClone, ClaimEpochSource.NONE, new VirtualClock())
         repository.createTask(context, TaskStart.commit(cloneDir, 'HEAD'), TaskStart.pin('HEAD', BaseRule.LOCAL_HEAD), TaskState.atStageStart('build'))
         repository.recordOutcome(TASK_ID, outcome, TrackerWrite.OWED)
+        registerTip(cloneDir, TASK_ID)
 
         then: 'the escalation carries the denial, and the killed round burned no attempt (FR1)'
         def report = (outcome as TaskOutcome.Escalated).report() as EscalationReport.CannotExecute

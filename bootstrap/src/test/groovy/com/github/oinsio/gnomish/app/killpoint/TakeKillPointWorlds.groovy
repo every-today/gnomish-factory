@@ -4,6 +4,7 @@ import com.github.oinsio.gnomish.adapter.agent.CliStageExecutor
 import com.github.oinsio.gnomish.adapter.agent.FakeAgentSupport
 import com.github.oinsio.gnomish.adapter.check.FilesExistCheckRunner
 import com.github.oinsio.gnomish.adapter.git.BareGitRepoFixture
+import com.github.oinsio.gnomish.adapter.git.BestEffortClosingPush
 import com.github.oinsio.gnomish.adapter.git.DenialCursorSource
 import com.github.oinsio.gnomish.adapter.git.EnvironmentAttemptPersistence
 import com.github.oinsio.gnomish.adapter.git.GitAttemptPersistence
@@ -11,6 +12,7 @@ import com.github.oinsio.gnomish.adapter.git.GitObjectsTaskRepository
 import com.github.oinsio.gnomish.adapter.git.GitProcessRunner
 import com.github.oinsio.gnomish.adapter.git.GitTaskRepository
 import com.github.oinsio.gnomish.adapter.git.LocalBoxEnvironment
+import com.github.oinsio.gnomish.adapter.git.PushBestEffortAttemptPersistence
 import com.github.oinsio.gnomish.adapter.git.SandboxRoundEnvironmentSource
 import com.github.oinsio.gnomish.adapter.git.TaskStart
 import com.github.oinsio.gnomish.adapter.law.PipelineLaw
@@ -33,6 +35,7 @@ import com.github.oinsio.gnomish.domain.engine.fake.VirtualClock
 import com.github.oinsio.gnomish.domain.engine.fake.VirtualTimeEquipment
 import com.github.oinsio.gnomish.domain.pipeline.PipelineDefinition
 import com.github.oinsio.gnomish.gitobjects.GitObjects
+import com.github.oinsio.gnomish.sandbox.ChildEnvAllowlist
 import com.github.oinsio.gnomish.sandbox.environment.EnvironmentLease
 import com.github.oinsio.gnomish.sandbox.environment.ScriptedSandboxDocker
 import com.github.oinsio.gnomish.untrustedtext.UntrustedText
@@ -73,7 +76,8 @@ trait TakeKillPointWorlds implements BareGitRepoFixture {
         agentRounds: {
             -> Files.exists(argv) ? FakeAgentSupport.capturedInvocations(argv).size() : 0
         })
-        world.store = new GitTaskRepository(new GitProcessRunner(), registered, git.epochs(), new VirtualClock())
+        world.store = RegisteringStore.of(
+                new GitTaskRepository(new GitProcessRunner(), registered, git.epochs(), new VirtualClock()), new GitProcessRunner(), registered.clonePath())
         world.roundWriter = { TaskState expected ->
             new GitAttemptPersistence(new GitProcessRunner(), world.worktree, TAKE_TASK_ID, git.epochs())
             .persist(TAKE_TASK_ID, expected, trace(expected))
@@ -96,7 +100,9 @@ trait TakeKillPointWorlds implements BareGitRepoFixture {
                 it.contains('stream-json')
             } as Integer
         })
-        world.store = new GitObjectsTaskRepository(objects, new VirtualClock(Instant.parse('2026-01-01T00:00:00Z')), git.epochs(), DenialCursorSource.NONE)
+        world.store = RegisteringStore.of(
+                new GitObjectsTaskRepository(objects, new VirtualClock(Instant.parse('2026-01-01T00:00:00Z')), git.epochs(), DenialCursorSource.NONE),
+                new GitProcessRunner(), clone)
         world.roundWriter = { TaskState expected ->
             containerRound(world, root, objects, expected)
         }
@@ -159,9 +165,12 @@ trait TakeKillPointWorlds implements BareGitRepoFixture {
         def source = new SandboxRoundEnvironmentSource(lease, new GitProcessRunner(), world.repoDir, TAKE_TASK_ID, rounds,
                 new VirtualClock())
         def executor = new CliStageExecutor(FakeAgentSupport.propertiesFor(asks ? 'decision-needed' : 'plain-round'),
-                new VirtualClock(LocalBoxEnvironment.EXEC_STAMP.plusSeconds(3600)), { e -> } as AgentProgressListener, TAKE_LAW, source)
-        def persistence = new EnvironmentAttemptPersistence(box, new GitProcessRunner(), world.repoDir, objects,
-                TAKE_TASK_ID, rounds, world.epochs)
+                new VirtualClock(LocalBoxEnvironment.EXEC_STAMP.plusSeconds(3600)), { e -> } as AgentProgressListener, ChildEnvAllowlist.none(), TAKE_LAW, source)
+        // Behind the closing push, as ContainerRunSupport#persistence assembles it: the state commit
+        // becomes the factory register (design D13 of tighten-spec-contract).
+        def persistence = new PushBestEffortAttemptPersistence(
+                new EnvironmentAttemptPersistence(box, new GitProcessRunner(), world.repoDir, objects, rounds, world.epochs),
+                new BestEffortClosingPush(new GitProcessRunner()), world.repoDir)
         def clock = new VirtualClock()
         def ports = new EnginePorts(executor, new FilesExistCheckRunner(), new ScriptedCommandCheckRunner(),
                 new ScriptedExternalCheckClient(), new ScriptedJudgeVoter(), new RecordingEventListener(), persistence,

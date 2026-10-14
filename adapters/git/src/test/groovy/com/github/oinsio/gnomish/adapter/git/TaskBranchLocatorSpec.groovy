@@ -66,22 +66,124 @@ class TaskBranchLocatorSpec extends Specification implements BareGitRepoFixture 
         (location as BranchLocation.Local).ref() == 'refs/heads/gnomish/PROJ-1'
     }
 
-    def "FR8: branch already fetched as a remote-tracking ref is reused, no new fetch performed"() {
-        given: 'origin has the branch, and the clone already fetched it once manually'
+    // FR13 of tighten-spec-contract: the locate fetch is a touchpoint fetch — one transfer moves
+    //     the branch and its factory register, the register straight into the clone's own.
+    def "FR13: the locate fetch brings origin's factory register with the branch"() {
+        given: 'origin carries the branch and its register'
+        def bare = initBareWithBranch(tempDir, 'origin-reg.git', 'gnomish/PROJ-20', 'f.txt', 'hi')
+        def seed = tempDir.resolve('origin-reg.git-seed')
+        runner.run(seed, 'push', 'origin', 'HEAD:refs/gnomish-factory/PROJ-20')
+        def clone = cloneOf(bare, 'clone-reg')
+
+        when:
+        def location = locator.locate(clone, 'PROJ-20')
+
+        then:
+        location instanceof BranchLocation.RemoteTracking
+        gitOutput(clone, 'rev-parse', 'refs/gnomish-factory/PROJ-20') == gitOutput(seed, 'rev-parse', 'HEAD')
+    }
+
+    def "FR13: a branch origin holds no register for is still located, and the clone gets no register"() {
+        given: 'origin carries the branch alone, as no factory closing push ever wrote it'
+        def bare = initBareWithBranch(tempDir, 'origin-noreg.git', 'gnomish/PROJ-21', 'f.txt', 'hi')
+        def clone = cloneOf(bare, 'clone-noreg')
+
+        when:
+        def location = locator.locate(clone, 'PROJ-21')
+
+        then: 'the branch arrived through the branch-only fetch; no register was invented for it'
+        location instanceof BranchLocation.RemoteTracking
+        gitExitCode(clone, 'rev-parse', '--verify', '--quiet', 'refs/gnomish-factory/PROJ-21') != 0
+    }
+
+    // FR13 of tighten-spec-contract (D13, amended 2026-10-13): a tracking ref `git clone` left
+    //     carries no register, so it does not end the locate — the touchpoint fetch still runs.
+    // Scenario: git/git-task-persistence / A tracking ref without a local branch still fetches the register
+    def "FR13: a tracking ref already present still runs the touchpoint fetch, which lands the register"() {
+        given: 'origin carries the branch and its register; the clone holds an older tracking ref and no register'
+        def bare = initBareWithBranch(tempDir, 'origin-tracked.git', 'gnomish/PROJ-22', 'f.txt', 'hi')
+        def seed = tempDir.resolve('origin-tracked.git-seed')
+        def clone = cloneOf(bare, 'clone-tracked')
+        fetchFromOrigin(clone, 'refs/heads/gnomish/PROJ-22:refs/remotes/origin/gnomish/PROJ-22')
+        commit(seed, 'g.txt', 'closing')
+        runner.run(seed, 'push', 'origin', 'gnomish/PROJ-22', 'HEAD:refs/gnomish-factory/PROJ-22')
+        def logs = LogCaptureSupport.attach(TaskBranchLocator, Level.DEBUG)
+
+        when:
+        def location = locator.locate(clone, 'PROJ-22')
+
+        then: 'the tracking ref was refreshed and the register landed in the clone beside it'
+        location == new BranchLocation.RemoteTracking('refs/remotes/origin/gnomish/PROJ-22')
+        gitOutput(clone, 'rev-parse', 'refs/remotes/origin/gnomish/PROJ-22') == gitOutput(seed, 'rev-parse', 'HEAD')
+        gitOutput(clone, 'rev-parse', 'refs/gnomish-factory/PROJ-22') == gitOutput(seed, 'rev-parse', 'HEAD')
+
+        and: 'a delivered fetch is no fallback'
+        logs.list.every {
+            !it.formattedMessage.contains('falling back')
+        }
+
+        cleanup:
+        logs?.detach()
+    }
+
+    // Scenario: git/git-task-persistence / An unreachable origin falls back to the tracking ref
+    def "FR13: an unreachable origin falls back to the tracking ref already present, and lands no register"() {
+        given: 'origin has the branch, and the clone already fetched it once without its register'
         def bare = initBareWithBranch(tempDir, 'origin2.git', 'gnomish/PROJ-2', 'f.txt', 'hi')
         def clone = cloneOf(bare, 'clone2')
         fetchFromOrigin(clone, 'refs/heads/gnomish/PROJ-2:refs/remotes/origin/gnomish/PROJ-2')
-        assert runner.run(clone, 'rev-parse', '--verify', '--quiet', 'refs/remotes/origin/gnomish/PROJ-2').exitCode() == 0
+        def tracked = gitOutput(clone, 'rev-parse', 'refs/remotes/origin/gnomish/PROJ-2')
 
-        and: 'origin is then broken, so a second fetch would fail'
+        and: 'origin is then unreachable, so the touchpoint fetch cannot deliver'
         runner.run(clone, 'remote', 'set-url', 'origin', tempDir.resolve('does-not-exist.git').toString())
+        def logs = LogCaptureSupport.attach(TaskBranchLocator, Level.DEBUG)
 
         when:
         def location = locator.locate(clone, 'PROJ-2')
 
-        then: 'the locator succeeded using the already-present tracking ref, proving it did not need to fetch again'
-        location instanceof BranchLocation.RemoteTracking
-        (location as BranchLocation.RemoteTracking).ref() == 'refs/remotes/origin/gnomish/PROJ-2'
+        then: 'the present tracking ref is the answer, unchanged, with no register invented — the reader says Unknown'
+        location == new BranchLocation.RemoteTracking('refs/remotes/origin/gnomish/PROJ-2')
+        gitOutput(clone, 'rev-parse', 'refs/remotes/origin/gnomish/PROJ-2') == tracked
+        gitExitCode(clone, 'rev-parse', '--verify', '--quiet', 'refs/gnomish-factory/PROJ-2') != 0
+
+        and: 'the fallback leaves a trace naming the branch and the ref it fell back to'
+        logs.list.count {
+            it.level == Level.DEBUG && it.formattedMessage.contains('gnomish/PROJ-2 did not deliver')
+            && it.formattedMessage.contains('falling back to the tracking ref refs/remotes/origin/gnomish/PROJ-2')
+        } == 1
+
+        cleanup:
+        logs?.detach()
+    }
+
+    def "FR13: a fetch cut off beside a present tracking ref falls back to it rather than trusting the ref's presence"() {
+        given: 'a git whose tracking ref exists and whose fetch was cut off on its deadline'
+        // The exit code is authoritative only on EXITED (GitCommandResult), so a zero carried by
+        // a cut-off fetch must not count as delivery.
+        def git = ScriptedGit.reftableClone()
+                .answer(['fetch'], GitCommandResult.of(0, '', '', Termination.TIMED_OUT))
+                .answer([
+                    'rev-parse',
+                    '--verify',
+                    '--quiet',
+                    'refs/remotes/origin/gnomish/PROJ-14'
+                ], 0, "${'2' * 40}\n")
+                .answer(['rev-parse'], 1)
+        def logs = LogCaptureSupport.attach(TaskBranchLocator, Level.DEBUG)
+
+        when:
+        def location = instantRetryLocator(git).locate(tempDir, 'PROJ-14')
+
+        then: 'the fallback answered without asking origin again, and said so'
+        location == new BranchLocation.RemoteTracking('refs/remotes/origin/gnomish/PROJ-14')
+        git.calls(['ls-remote']).isEmpty()
+        git.calls(['fetch']).size() == 1
+        logs.list.count {
+            it.formattedMessage.contains('falling back to the tracking ref')
+        } == 1
+
+        cleanup:
+        logs?.detach()
     }
 
     def "FR8: branch only on origin is narrow-fetched and becomes readable via the returned ref"() {
@@ -152,6 +254,7 @@ class TaskBranchLocatorSpec extends Specification implements BareGitRepoFixture 
         !Files.exists(clone.resolve('.git/FETCH_HEAD'))
     }
 
+    // Scenario: tracker/tracker-take / Confirmed-missing ref routes fresh
     def "FR13: branch absent everywhere is reported as not-found, not a crash"() {
         given: 'a clone pointed at a bare origin that has no branches at all'
         def bare = initBareRepo(tempDir, 'origin5.git')
@@ -211,7 +314,7 @@ class TaskBranchLocatorSpec extends Specification implements BareGitRepoFixture 
      * (an {@code ls-remote} listing) and whose every fetch exits with {@code fetch}.
      */
     private static ScriptedGit originCarries(GitCommandResult fetch) {
-        new ScriptedGit()
+        ScriptedGit.reftableClone()
                 .answer(['fetch'], fetch)
                 .answer(['ls-remote'], 0, "${'1' * 40}\trefs/heads/gnomish/PROJ\n")
                 .answer(['rev-parse'], 1)
@@ -229,6 +332,7 @@ class TaskBranchLocatorSpec extends Specification implements BareGitRepoFixture 
                         VirtualTimeEquipment.waitingOn({ Duration ignored -> } as Sleeper), GitInfrastructureRetry.DEFAULT_ATTEMPTS, Duration.ofMillis(1)))
     }
 
+    // Scenario: tracker/tracker-take / Every non-confirming locate failure is infrastructure
     def "FR6: an unreachable origin is unavailable, never absent — no fresh branch may be forked from it"() {
         given: 'a clone whose origin URL points nowhere, so neither the fetch nor the probe gets an answer'
         def clone = initWorkingRepo(tempDir, 'clone-unreachable')
@@ -243,6 +347,8 @@ class TaskBranchLocatorSpec extends Specification implements BareGitRepoFixture 
         (location as BranchLocation.Unavailable).reason().contains('origin did not answer whether gnomish/PROJ-8')
     }
 
+    // Scenario: tracker/tracker-take / Every non-confirming locate failure is infrastructure
+    // Scenario: tracker/tracker-take / Fetch failure never forks a duplicate branch
     def "FR6: a branch origin confirms it carries but the fetch could not deliver is unavailable"() {
         given: 'a git that answers the branch probe but fails every fetch'
         def git = fetchRefused()
@@ -276,6 +382,8 @@ class TaskBranchLocatorSpec extends Specification implements BareGitRepoFixture 
         (location as BranchLocation.Unavailable).reason().contains('origin carries gnomish/PROJ-13')
     }
 
+    // Scenario: tracker/tracker-take / Fetch failure never forks a duplicate branch
+    // Scenario: tracker/tracker-take / The locate retry spends its own budget
     def "FR6: the unsettled lookup is re-attempted under the infrastructure budget before giving up"() {
         given:
         def git = fetchRefused()
@@ -290,10 +398,11 @@ class TaskBranchLocatorSpec extends Specification implements BareGitRepoFixture 
     // FR6 of harden-task-branch-contract: "this clone has no origin" is itself the answer of a git
     //     invocation, so a fetch cut off on its deadline must not be followed by a configuration
     //     read whose own silence is then spent as a second vote for absence.
+    // Scenario: tracker/tracker-take / Every non-confirming locate failure is infrastructure
     def "FR6: a fetch cut off on its deadline is unavailable even when the origin read fails too"() {
         given: 'a git that stalls on every network command and denies having an origin at all'
         def cutOff = GitCommandResult.of(143, '', '', Termination.TIMED_OUT)
-        def stalling = new ScriptedGit()
+        def stalling = ScriptedGit.reftableClone()
                 .answer(['fetch'], cutOff)
                 .answer(['ls-remote'], cutOff)
                 .answer([

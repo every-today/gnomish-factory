@@ -107,7 +107,9 @@ trait AppAssemblyFixture implements FactoryPropertiesFixture {
                         timeEquipment),
                 timeEquipment,
                 factoryProperties,
-                new SandboxProperties(null, null, null, null, null, null, false, null, null, null, null))
+                new SandboxProperties(null, null, null, null, null, null, false, null, null, null, null),
+                // The root's host workspace realization, through its own bean method (F119).
+                new ManualRunConfiguration().workspaceFactory())
                 // FR13, D14 of add-base-ref-resolution: production wiring (TakeCommand/ServeCommand)
                 // always attaches the pipeline source it read its startup definition from before a
                 // fresh claim can read its task tier through it; a spec building this assembly
@@ -244,6 +246,14 @@ trait AppAssemblyFixture implements FactoryPropertiesFixture {
         // harden-untrusted-text-sinks); the specs that assert on it redirect that stream.
         def errorConsole = LiveConsoleIO.onStderr()
         def checkClientRegistry = [(GithubCheckClientFactory.PROVIDER): new GithubCheckClientFactory()]
+        // The root's one secrets port, as its secretsProvider bean builds it, over a factory home of
+        // its own with no secrets folder: every value — a check credential, and every child
+        // environment's base set, passthrough and AI seam (NFR-S3 of tighten-spec-contract) —
+        // resolves from the test JVM's environment, whose GNOMISH_* variables the build strips.
+        def secrets = new EnvFileSecretsProvider(FactoryHome.at(Files.createTempDirectory('no-secrets-home')), null)
+        // The root's host workspace realization (F119 of tighten-spec-contract): one instance, handed
+        // to the startup and the assembly as the context hands its bean.
+        def workspaceFactory = manualRun.workspaceFactory()
         // The graph the context assembles (design D6, D11 of collapse-composition-roots), built
         // through the production bean methods themselves so the fixture cannot drift from them.
         // The assembly the context's manualRunAssembly bean builds (design D3 of
@@ -255,19 +265,20 @@ trait AppAssemblyFixture implements FactoryPropertiesFixture {
                         new FilesExistCheckRunner(),
                         new ShellCommandCheckRunner(instantSource),
                         checkClientRegistry,
-                        MapSecretsProvider.NONE,
+                        secrets,
                         factoryProperties,
                         timeEquipment),
                 timeEquipment,
                 factoryProperties,
-                sandboxProperties)
+                sandboxProperties,
+                workspaceFactory)
         def commands = new TrackerCommandConfiguration()
         // The root's one execution-mode selector, through its own bean method (design D22 of
         // supervise-daemon-loops-and-embed-dashboard), over the probe the spec chose; the container
         // supports take it and the graph's one time equipment, as the context wires them.
         def modeSelector = new SandboxBindingConfiguration().sandboxModeSelector(
                 bindingProperties, sandboxProperties, DiscoveredBindings.real(), runtimeProbe)
-        def containerSupports = new ContainerSupports(checkClientRegistry, factoryProperties, sandboxProperties,
+        def containerSupports = new ContainerSupports(checkClientRegistry, assembly.checks, factoryProperties, sandboxProperties,
                 modeSelector, git, timeEquipment)
         def trackerWiring = new TrackerWiring(trackerAdapterRegistry, MapSecretsProvider.NONE, TrackerValidatorStub.plainSource(), timeEquipment)
         def serveProperties = new ServeProperties(0, null, null, null, null, null, null, null, null, null)
@@ -281,7 +292,7 @@ trait AppAssemblyFixture implements FactoryPropertiesFixture {
         def dispatch = commands.subcommandDispatch(
                 reportCommands,
                 commands.takeCommand(slotWiringFactory, git, factoryProperties, scope, trackerWiring,
-                commands.takeCommandSeams(serveProperties, timeEquipment), sandboxLifecyclePass),
+                commands.takeCommandSeams(serveProperties, timeEquipment, console), sandboxLifecyclePass),
                 commands.serveCommand(
                         commands.serveRuntimeAssembly(slotWiringFactory,
                         commands.serveAssembly(factoryProperties, serveProperties, timeEquipment, resolvedClone), git,
@@ -290,7 +301,7 @@ trait AppAssemblyFixture implements FactoryPropertiesFixture {
                         git, scope, serveProperties, trackerWiring, errorConsole))
         def drive = manualRun.manualRunDrive(
                 scope,
-                new PipelineStartup(TrackerValidatorStub.plainSource()),
+                new PipelineStartup(TrackerValidatorStub.plainSource(), workspaceFactory),
                 new AdHocTaskSynthesizer(instantSource, new Random()),
                 assembly,
                 new InMemoryAttemptPersistence(),
