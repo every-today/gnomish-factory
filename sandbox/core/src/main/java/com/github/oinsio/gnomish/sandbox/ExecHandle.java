@@ -1,6 +1,6 @@
 package com.github.oinsio.gnomish.sandbox;
 
-import java.io.InputStream;
+import com.github.oinsio.gnomish.subprocess.ChildOutput;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.InstantSource;
@@ -14,18 +14,24 @@ import java.time.InstantSource;
  * and a command check reading a bounded tail drive the same contract whether
  * the process runs on the host or inside a container.
  *
- * <p>Implements FR1, FR4 of add-sandbox-core.
+ * <p>The output is a {@link ChildOutput}, the one owner of a child's readable pipe (design D1 of
+ * make-pipe-reads-non-parking): a reader drains it, or pulls it through its non-parking stream
+ * view, and never holds the bare stream, so no reader of any handle can park in the pipe.
+ *
+ * <p>Implements FR1, FR4 of add-sandbox-core; FR1, FR5 of make-pipe-reads-non-parking.
  */
 public interface ExecHandle {
 
     /**
-     * The process's standard output as a stream — the merged stdout/stderr
-     * stream when {@link ExecCommand#mergeStderr()} was set, stdout alone
-     * otherwise. Everything read here is inert data (NFR-S3).
+     * The process's standard output, read without parking — the merged stdout/stderr
+     * stream when {@link ExecCommand#stderr()} was {@link StderrPolicy.Merged},
+     * stdout alone otherwise (the stderr then is a pipe of its own or a host
+     * file, design D18 of fix-terminal-receipt-convergence). Everything read
+     * here is inert data (NFR-S3).
      *
-     * @return the output stream; never null
+     * @return the output, the same value on every call; never null
      */
-    InputStream output();
+    ChildOutput output();
 
     /**
      * The instant the process was started, read immediately after the start
@@ -58,6 +64,19 @@ public interface ExecHandle {
      * @return the process exit code
      */
     int waitForExit();
+
+    /**
+     * How long a reader of {@link #output()} may wait, after the wait has resolved, for the stream
+     * to reach its end — the post-exit bound of the supervisor that waits for this process (design
+     * D17 of fix-terminal-receipt-convergence). A descendant can inherit the pipe and hold it open
+     * after the process exited; a reader joins its drain with this bound and never with one of its
+     * own, so every reader of every handle gives a holder the same time.
+     *
+     * <p>Implements FR19 of fix-terminal-receipt-convergence.
+     *
+     * @return the post-exit bound; never null, never negative
+     */
+    Duration postExitBound();
 
     /**
      * The outcome of {@link #waitForExitOrTimeout}: a natural exit within budget

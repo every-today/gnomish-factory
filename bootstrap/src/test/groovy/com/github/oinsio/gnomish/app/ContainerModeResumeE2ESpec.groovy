@@ -30,6 +30,7 @@ import com.github.oinsio.gnomish.sandbox.CapabilityPassport
 import com.github.oinsio.gnomish.sandbox.ExecCommand
 import com.github.oinsio.gnomish.sandbox.SandboxProperties
 import com.github.oinsio.gnomish.sandbox.Segment
+import com.github.oinsio.gnomish.sandbox.StderrPolicy
 import com.github.oinsio.gnomish.sandbox.environment.GuardImageAvailability
 import com.github.oinsio.gnomish.sandbox.environment.OwnershipMode
 import com.github.oinsio.gnomish.untrustedtext.UntrustedText
@@ -243,8 +244,8 @@ class ContainerModeResumeE2ESpec extends Specification implements BareGitRepoFix
             'sh',
             '-c',
             'echo done > output.txt'
-        ], [:], null, true))
-        handle.output().readAllBytes()
+        ], [:], null, StderrPolicy.MERGED))
+        handle.output().stream().readAllBytes()
         assert handle.waitForExit() == 0
         // The round opened on the current tip: that tip is the token its snapshot subject names
         // (design D10 of make-checkpoint-gate-durable), opened as SandboxRoundEnvironmentSource

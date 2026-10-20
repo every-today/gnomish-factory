@@ -22,6 +22,13 @@ import spock.lang.Specification
  * <em>no</em> production class reaches a {@code Files} write method unless it lives in
  * the leaf or carries {@code @NonAtomicWrite} with its reason.
  *
+ * <p>The marker is matched by its fully qualified name,
+ * {@code com.github.oinsio.buildchecks.atomicwrite.NonAtomicWrite}: it lives in the
+ * {@code build-checks} included build, put {@code compileOnly} on every module by
+ * {@code java-conventions}, so a dependency-free leaf such as {@code :subprocess} wears it
+ * with no edge to {@code :atomicfile} (design D20 of fix-terminal-receipt-convergence, amended
+ * 2026-10-18). An annotation of the same simple name in any other package does not pass.
+ *
  * <p>The container-side persisters are deliberately absent from the second rule: they
  * reach durability at commit granularity, per the per-medium table of
  * {@code docs/adr/0003-crash-consistency.md}, and consume no host filesystem writer.
@@ -35,8 +42,8 @@ class AtomicWriteBoundarySpec extends Specification {
     .withImportOption(ImportOption.Predefined.DO_NOT_INCLUDE_TESTS)
     .importPackages('com.github.oinsio.gnomish')
 
-    // Scenario: build/module-layering / The atomic file writer lives in atomicfile
-    // Scenario: build/module-layering / Host-side writers and the dashboard writer share one atomic writer
+    // Scenario: build-system/module-layering / The atomic file writer lives in atomicfile
+    // Scenario: build-system/module-layering / Host-side writers and the dashboard writer share one atomic writer
     def "FR5: the atomic-rename discipline exists only in the atomicfile leaf"() {
         given: 'the rule reserving StandardCopyOption to the shared writer'
         def rule = noClasses()
@@ -49,8 +56,8 @@ class AtomicWriteBoundarySpec extends Specification {
     }
 
     // Scenario: git/git-task-persistence / A kill mid-write on the host leaves a whole file
-    // Scenario: build/module-layering / The atomic file writer lives in atomicfile
-    // Scenario: build/module-layering / Host-side writers and the dashboard writer share one atomic writer
+    // Scenario: build-system/module-layering / The atomic file writer lives in atomicfile
+    // Scenario: build-system/module-layering / Host-side writers and the dashboard writer share one atomic writer
     def "FR5: every host-side factory-file writer goes through the shared writer"() {
         given: 'the writers named by design D10 — the .gnomish-task/ four plus the dashboard and snapshot writers'
         def rule = classes()
@@ -92,7 +99,7 @@ class AtomicWriteBoundarySpec extends Specification {
         and: 'the rule: only the leaf itself, or a class that declares why it may not use it'
         def rule = noClasses()
                 .that().resideOutsideOfPackage('com.github.oinsio.gnomish.atomicfile')
-                .and().areNotAnnotatedWith('com.github.oinsio.gnomish.atomicfile.NonAtomicWrite')
+                .and().areNotAnnotatedWith('com.github.oinsio.buildchecks.atomicwrite.NonAtomicWrite')
                 .should().callMethodWhere(filesWrite)
 
         expect: 'every file write in the build goes through AtomicFileWriter or carries its reason'

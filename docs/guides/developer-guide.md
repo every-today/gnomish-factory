@@ -82,6 +82,10 @@ The branch scope trades one risk for speed: a mutant in an unchanged class can s
 
 Reports land per module: `<module>/build/reports/jacoco/test/html/index.html` and `<module>/build/reports/pitest/index.html`.
 
+<!-- implements G1, M5 of make-pipe-reads-non-parking (design D9, as amended 2026-10-19) -->
+
+**On Linux, from a Mac.** A spec whose subject is the platform — a real process, a pipe, a signal, a process group — runs on Linux too before the root `check` and before a push, through the Linux spec runner: `scripts/linux-specs.sh <gradle args>`, for example `scripts/linux-specs.sh :subprocess:test` or `scripts/linux-specs.sh --repeat 20 :subprocess:test --tests '*EscapedHolderSpec'` (`--repeat` reruns with `--rerun` and stops at the first failure). It builds the image from `scripts/linux-runner/Dockerfile` (Temurin 25 and a git of at least 2.51, the platform of the CI `build` job) when the image is missing (`--rebuild` forces it), copies the working tree without `build/` and `.gradle/` into a scratch directory (`$LINUX_SPECS_DIR`, default `$TMPDIR/gnomish-linux-specs`, whose Gradle home persists between runs), runs Gradle there as your own uid and exits with Gradle's code; the reports are under `<scratch>/repo/<module>/build/reports/`. Its `docker` calls use the build's clean Docker client configuration, not yours, so no credential helper is asked. The first run downloads the dependencies (about eight minutes); later runs of one module take seconds to minutes. Suites that need a Docker daemon stay on the host and on CI.
+
 <!-- implements FR3, FR4, NFR-O1, UX1 of kill-expensive-mutants -->
 
 Every module `pitest` run, `check` included, also writes a mutation-cost report to `<module>/build/reports/pitest/expensive-mutants.txt` and prints one line such as `PIT mutation cost :adapters:git: 2 above threshold (100 tests); most expensive …`. The report lists, most expensive first, the mutants PIT killed only after more than 100 test executions; the threshold is one constant in [`pitest-cost-conventions.gradle`](../../build-logic/src/main/groovy/pitest-cost-conventions.gradle). It is report-only and never fails the build, because PIT's test order — and so the count — depends on recorded timings. Answer a hotspot with a fast killing spec, not an exemption: a small, fast feature that kills the mutant runs early, since PIT tries the covering tests in ascending order of their recorded coverage-pass time plus covered blocks / 10. The `@DoNotMutate` and `excludedClasses` bars in [`testing.md`](../../.claude/rules/testing.md) are unchanged. When measuring one class, scope it by its exact name (`-PpitScope=<fqcn>`): a glob such as `Foo*` also matches `FooSpec`.
@@ -118,10 +122,10 @@ Each finding prints as `<file>:<line>: [<rule>] <what was found>`, then a `fix:`
 | `scenario link: malformed marker`  | Write the marker as `// Scenario: <spec-id> / <title>`, the title copied verbatim, or reword the comment so it does not start with the marker            |
 | `scenario link: exemption`         | Fix the exemption file at the named line: name a real scenario, give it a verifier, remove a stale or duplicate line, or match the file name to `spec:`  |
 
-**Exempting a scenario.** A scenario that something other than a test verifies — a CI workflow, a release script — is listed in its capability's file under `config/spec-contract-exemptions/`, named by the spec id with `/` replaced by `-` (`build/ci` → `build-ci.txt`). The first line declares the capability; each further line is one scenario; blank lines and `#` comments are allowed:
+**Exempting a scenario.** A scenario that something other than a test verifies — a CI workflow, a release script — is listed in its capability's file under `config/spec-contract-exemptions/`, named by the spec id with `/` replaced by `-` (`build-system/ci` → `build-system-ci.txt`). The first line declares the capability; each further line is one scenario; blank lines and `#` comments are allowed:
 
 ```text
-spec: build/ci
+spec: build-system/ci
 A reusable-workflow job is exempt from the timeout => .github/workflows/ci.yml
 Some scenario whose test comes later => pending-test: <change-name>
 ```

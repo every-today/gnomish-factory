@@ -1,17 +1,22 @@
 package com.github.oinsio.gnomish.sandbox.environment
 
-import java.util.concurrent.CountDownLatch
+import com.github.oinsio.gnomish.sandbox.StderrPolicy
+import com.github.oinsio.gnomish.subprocess.StdinSource
+import java.nio.charset.StandardCharsets
 
 /**
  * Shared scripted test doubles for {@link ContainerTaskExecutionEnvironment} exec
  * specs: a {@link DockerCli} whose every management call (inspect/create/...)
- * succeeds and whose every {@code start} returns one scripted {@link Process}.
+ * succeeds and whose every {@code start} returns one scripted {@link Process},
+ * recording the argv and the {@link StdinSource} it was handed.
  * Extracted from {@code ContainerTaskExecutionEnvironmentExecSpec} so
  * {@code ContainerExecHandleSpec} shares the same fixture rather than
  * duplicating it.
  */
 final class ScriptedDockerCli extends DockerCli {
     final List<List<String>> starts = []
+    final List<StdinSource> sources = []
+    final List<StderrPolicy> stderrs = []
     private final Process process
 
     ScriptedDockerCli(Process process) {
@@ -33,45 +38,25 @@ final class ScriptedDockerCli extends DockerCli {
     }
 
     @Override
-    Process start(List<String> args, boolean mergeStderr) {
+    Process start(List<String> args, StderrPolicy stderr, StdinSource stdin) {
         starts << args
+        sources << stdin
+        stderrs << stderr
         process
     }
 }
 
-/** Captures the child's stdin bytes and signals when the pipe is closed. */
-final class LatchedStdin extends ByteArrayOutputStream {
-    final CountDownLatch closed = new CountDownLatch(1)
-
-    @Override
-    void close() {
-        closed.countDown()
-    }
-}
-
-/** A {@link Process} double with configurable stdout/exit code and captured stdin. */
+/**
+ * A {@link Process} double that has exited with 0 and canned stdout, read through {@link FakeProcess}'s
+ * own pipe (design D6 of make-pipe-reads-non-parking).
+ */
 final class ScriptedProcess extends FakeProcess {
-    final LatchedStdin stdin = new LatchedStdin()
-    byte[] stdout = new byte[0]
-    int exit = 0
 
-    @Override
-    OutputStream getOutputStream() {
-        stdin
+    ScriptedProcess() {
+        this(new byte[0])
     }
 
-    @Override
-    InputStream getInputStream() {
-        new ByteArrayInputStream(stdout)
-    }
-
-    @Override
-    int waitFor() {
-        exit
-    }
-
-    @Override
-    int exitValue() {
-        exit
+    ScriptedProcess(byte[] stdout) {
+        super(0, new String(stdout, StandardCharsets.UTF_8))
     }
 }

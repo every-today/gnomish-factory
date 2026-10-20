@@ -34,22 +34,17 @@ class RawCaptureOwners {
      * ambiguities without fighting the shared, non-configurable formatter.
      */
     static final Map<String, String> CAPTURE_OWNERS = [
-        // --- subprocess streams: the mechanics layer and the two handles built on it ---
+        // --- subprocess streams: the mechanics layer and the readers built on it ---
+        // CaptureRunner, GitExec, HostExecHandle and ContainerFileChannel left this map with
+        // make-pipe-reads-non-parking: each now takes a child's output as a ChildOutput, the one
+        // owner of a child's readable pipe (design D1), and reads no process stream itself.
         [
-            'subprocess/src/main/java/com/github/oinsio/gnomish/subprocess/CaptureRunner.java',
-            'mechanics (D3 carve-out): drains a process into Captured, whose fields stay String so the module carries no text policy; every factory reader of a Captured mints at its own edge',
+            'subprocess/src/main/java/com/github/oinsio/gnomish/subprocess/ChildOutput.java',
+            'mechanics (D3 carve-out): the one owner of a child\'s readable pipe (design D1 of make-pipe-reads-non-parking); it hands bytes to a drain or a stream view and never turns them into text',
         ],
         [
-            'gitobjects/src/main/java/com/github/oinsio/gnomish/gitobjects/GitExec.java',
-            'mechanics (D3 carve-out): the bare-object exec whose extraction-readiness depends on Captured staying String',
-        ],
-        [
-            'sandbox/docker/src/main/java/com/github/oinsio/gnomish/sandbox/environment/HostExecHandle.java',
-            'CONTAINER: hands the raw stream to CapturedExec, which is the mint',
-        ],
-        [
-            'sandbox/docker/src/main/java/com/github/oinsio/gnomish/sandbox/environment/ContainerFileChannel.java',
-            'mechanics: drains the channel pipes as bytes, so the channel file itself is never decoded here; the only text read out is a failed exec\'s stderr, and it travels as the IOException detail rather than as a carrier field',
+            'subprocess/src/main/java/com/github/oinsio/gnomish/subprocess/ExecutableLookup.java',
+            'mechanics (D3 carve-out): reads the first 256 bytes of a file to follow its #! chain before a launch (design D19 of fix-terminal-receipt-convergence); the bytes are parsed for an interpreter path and never leave the module as text',
         ],
         [
             'sandbox/docker/src/main/java/com/github/oinsio/gnomish/sandbox/environment/HostChannelFiles.java',
@@ -112,6 +107,10 @@ class RawCaptureOwners {
             'AGENT: reads the agent\'s decision file and hands it to DecisionFileReader, which is the mint',
         ],
         [
+            'adapters/agent/src/main/java/com/github/oinsio/gnomish/adapter/agent/RoundScratchDirectory.java',
+            'AGENT: reads the tail of the agent CLI\'s stderr file and mints it at the read (design D18 of fix-terminal-receipt-convergence)',
+        ],
+        [
             'adapters/src/main/java/com/github/oinsio/gnomish/adapter/law/WorkingTreeLawSource.java',
             'MANIFEST: reads a law file into Read.Text, whose unreadable arm already mints; the law text itself is a Control artifact the pipeline feeds to an executor, not prose a sink renders',
         ],
@@ -142,7 +141,7 @@ class RawCaptureOwners {
         ],
         [
             'test-fixtures/src/main/groovy/com/github/oinsio/gnomish/adapter/git/LocalBoxEnvironment.groovy',
-            'no mint owed: test-time only — a daemon-free box double whose file channel answers bytes, as its production twin ContainerFileChannel does, and whose exec hands the started process to HostExecHandle, which is the mint. It is not on any runtime path; it moved into :test-fixtures so :bootstrap\'s RoundTokenIdentitySpec can drive a whole round through it (task 7.7 of make-checkpoint-gate-durable)',
+            'no mint owed: test-time only — a daemon-free box double whose file channel answers bytes, as its production twin ContainerFileChannel does, and whose exec hands the started process to HostExecHandle, whose ChildOutput CapturedExec drains and mints. It is not on any runtime path; it moved into :test-fixtures so :bootstrap\'s RoundTokenIdentitySpec can drive a whole round through it (task 7.7 of make-checkpoint-gate-durable)',
         ],
         [
             'test-fixtures/src/main/groovy/com/github/oinsio/gnomish/adapter/git/SeedTransferFixture.groovy',
@@ -151,6 +150,10 @@ class RawCaptureOwners {
         [
             'test-fixtures/src/main/groovy/com/github/oinsio/gnomish/sandbox/environment/GuardImageAvailability.groovy',
             'no mint owed: test-time only — drains a docker prerequisite probe whose bytes are discarded, so a spec skips instead of failing offline',
+        ],
+        [
+            'test-fixtures/src/main/groovy/com/github/oinsio/gnomish/sandbox/environment/GroupLeader.groovy',
+            'no mint owed: test-time only — reads the one readiness line a committed stand-in preset prints once it leads its process group, compares it with the library\'s own answer and discards it (design D19 of fix-terminal-receipt-convergence, the group sweep specs)',
         ],
         [
             'test-fixtures/src/main/groovy/com/github/oinsio/gnomish/testfixtures/sourcescan/SourceMarkerScan.groovy',

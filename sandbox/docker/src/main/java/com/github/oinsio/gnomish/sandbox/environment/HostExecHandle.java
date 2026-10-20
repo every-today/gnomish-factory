@@ -1,16 +1,16 @@
 package com.github.oinsio.gnomish.sandbox.environment;
 
 import com.github.oinsio.gnomish.sandbox.ExecHandle;
+import com.github.oinsio.gnomish.subprocess.ChildOutput;
 import com.github.oinsio.gnomish.subprocess.ProcessSupervisor;
 import com.github.oinsio.gnomish.subprocess.Supervision;
-import java.io.InputStream;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.InstantSource;
 
 /**
  * The host adapter's {@link ExecHandle}: a thin wrapper over a started local
- * {@link Process} exposing its stdout stream and the wait/kill/wall-time
+ * {@link Process} exposing its stdout and the wait/kill/wall-time
  * mechanics an agent round and a command check both drive. This is the sole
  * home of the timeout-kill logic that {@code LaunchedAgentProcess} carried
  * before processes moved behind the environment port (FR4).
@@ -30,12 +30,24 @@ import java.time.InstantSource;
  * two {@code @DoNotMutate} timing-race exemptions are gone: the one remaining
  * catch lives in the supervisor, driven deterministically by its own spec (M5).
  *
+ * <p>After each wait, however it resolved, the process group is swept ({@link HostSweep},
+ * design D19 of fix-terminal-receipt-convergence) — the {@code docker} client of a box command
+ * included, a host process like any other — so a descendant reparented away from the child, which
+ * no snapshot of the tree lists, dies with the invocation; the wait's result is unchanged by it. A
+ * sweep that found a survivor says one DEBUG line (NFR-O3).
+ *
+ * <p>The stdout is minted once, at construction, as the process's {@link ChildOutput} (design D1 of
+ * make-pipe-reads-non-parking): this class never touches the bare stream, so no reader of a host
+ * handle can park in the pipe.
+ *
  * <p>Implements FR1, FR4 of add-sandbox-core; FR6, D3, D7 of add-agent-executor;
- * FR6, FR11, G5 of bound-subprocess-commands.
+ * FR6, FR11, G5 of bound-subprocess-commands; FR19, FR21, NFR-O3 of
+ * fix-terminal-receipt-convergence; FR5 of make-pipe-reads-non-parking.
  */
 public final class HostExecHandle implements ExecHandle {
 
     private final Process process;
+    private final ChildOutput output;
     private final Instant startedAt;
     private final ProcessSupervisor supervisor = new ProcessSupervisor();
 
@@ -45,12 +57,13 @@ public final class HostExecHandle implements ExecHandle {
      */
     public HostExecHandle(Process process, Instant startedAt) {
         this.process = process;
+        this.output = ChildOutput.stdout(process);
         this.startedAt = startedAt;
     }
 
     @Override
-    public InputStream output() {
-        return process.getInputStream();
+    public ChildOutput output() {
+        return output;
     }
 
     @Override
@@ -61,6 +74,7 @@ public final class HostExecHandle implements ExecHandle {
     @Override
     public Wait waitForExitOrTimeout(Duration timeout, InstantSource clock) {
         Supervision supervision = supervisor.await(process, timeout);
+        sweepGroup();
         return switch (supervision.termination()) {
             case EXITED -> new Wait.Exited(Duration.between(startedAt, clock.instant()));
             case TIMED_OUT -> new Wait.TimedOut();
@@ -78,6 +92,18 @@ public final class HostExecHandle implements ExecHandle {
      */
     @Override
     public int waitForExit() {
-        return supervisor.await(process, null).exitCode();
+        int exitCode = supervisor.await(process, null).exitCode();
+        sweepGroup();
+        return exitCode;
+    }
+
+    private void sweepGroup() {
+        HostSweep.after(process, "host process " + process.pid());
+    }
+
+    /** The bound of the supervisor both waits run on — the one source of it (design D17). */
+    @Override
+    public Duration postExitBound() {
+        return supervisor.postExitBound();
     }
 }

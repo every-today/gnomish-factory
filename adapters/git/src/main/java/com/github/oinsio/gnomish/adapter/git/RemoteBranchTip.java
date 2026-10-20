@@ -57,12 +57,14 @@ final class RemoteBranchTip {
      * Reads the commit {@code origin} currently holds for {@code branch}.
      *
      * @param repo the clone the read runs from; never null
-     * @param branch the task branch name; never blank
+     * @param taskId the tracker's original taskId, whose task branch origin is asked about; never blank
      * @return the remote tip's sha, or empty when the remote is unreachable or does not carry the
      *     branch at all
+     * @throws com.github.oinsio.gnomish.app.port.git.BranchTipUnavailableException if origin answered
+     *     with a line whose first field is not one full object id
      */
-    Optional<String> read(Path repo, String branch) {
-        return tipOf(lsRemote(repo, branch));
+    Optional<String> read(Path repo, String taskId) {
+        return tipOf(TaskBranchRefs.head(taskId), lsRemote(repo, taskId));
     }
 
     /**
@@ -70,17 +72,17 @@ final class RemoteBranchTip {
      * only a remote that actually answered can put a commit's absence on the record.
      *
      * @param repo the clone the read runs from; never null
-     * @param branch the task branch name; never blank
+     * @param taskId the tracker's original taskId, whose task branch origin is asked about; never blank
      * @param commit the commit whose delivery is in question; never blank
      * @return whether {@code origin} carries {@code commit}, demonstrably does not, or did not say
      */
-    Carriage confirm(Path repo, String branch, String commit) {
-        GitCommandResult lsRemote = lsRemote(repo, branch);
+    Carriage confirm(Path repo, String taskId, String commit) {
+        GitCommandResult lsRemote = lsRemote(repo, taskId);
         if (lsRemote.termination() != Termination.EXITED || lsRemote.exitCode() != 0) {
             return Carriage.UNKNOWN;
         }
         // An answered read with no ref for the branch is a positive fact: origin does not have it.
-        return tipOf(lsRemote)
+        return tipOf(TaskBranchRefs.head(taskId), lsRemote)
                 .map(remoteTip -> ancestryVerdict(runner.run(repo, "merge-base", "--is-ancestor", commit, remoteTip)))
                 .orElse(Carriage.ABSENT);
     }
@@ -112,31 +114,33 @@ final class RemoteBranchTip {
      * harden-task-branch-contract).
      *
      * @param repo the clone the read runs from; never null
-     * @param branch the task branch name; never blank
+     * @param taskId the tracker's original taskId, whose task branch origin is asked about; never blank
      * @return {@link Carriage#CARRIES} when origin holds the branch, {@link Carriage#ABSENT} when
      *     it answered and holds no such ref, {@link Carriage#UNKNOWN} when it did not answer
      */
-    Carriage confirmBranch(Path repo, String branch) {
-        GitCommandResult lsRemote = lsRemote(repo, branch);
+    Carriage confirmBranch(Path repo, String taskId) {
+        GitCommandResult lsRemote = lsRemote(repo, taskId);
         if (lsRemote.termination() != Termination.EXITED || lsRemote.exitCode() != 0) {
             return Carriage.UNKNOWN;
         }
         return lsRemote.stdout().isBlank() ? Carriage.ABSENT : Carriage.CARRIES;
     }
 
-    private GitCommandResult lsRemote(Path repo, String branch) {
-        return LsRemote.refs(runner, repo, "refs/heads/" + branch);
+    private GitCommandResult lsRemote(Path repo, String taskId) {
+        return LsRemote.refs(runner, repo, TaskBranchRefs.head(taskId));
     }
 
-    private static Optional<String> tipOf(GitCommandResult lsRemote) {
+    private static Optional<String> tipOf(String ref, GitCommandResult lsRemote) {
         if (lsRemote.termination() != Termination.EXITED
                 || lsRemote.exitCode() != 0
                 || lsRemote.stdout().isBlank()) {
             return Optional.empty();
         }
-        // @UntrustedParser warrant (design D11): the first field of an ls-remote line is an object
-        //     id — compared for equality and passed to git, never rendered.
-        return Optional.of(lsRemote.stdout().forParsing().strip().split("\\s+", 2)[0]);
+        // @UntrustedParser warrant (design D11): the first field of an ls-remote line, refused
+        //     unless it is one full object id (FR17 of fix-terminal-receipt-convergence) — compared
+        //     for equality and passed to git, never rendered.
+        String field = lsRemote.stdout().forParsing().strip().split("\\s+", 2)[0];
+        return Optional.of(VerifiedTip.shaped(ref, LsRemote.COMMAND, field, lsRemote));
     }
 
     /**
@@ -145,12 +149,12 @@ final class RemoteBranchTip {
      * ancestor.
      *
      * @param repo the clone the read runs from; never null
-     * @param branch the task branch name; never blank
+     * @param taskId the tracker's original taskId, whose task branch origin is asked about; never blank
      * @param commit the commit whose delivery is in question; never blank
      * @return {@code true} only when the remote tip demonstrably contains {@code commit}
      */
-    boolean carries(Path repo, String branch, String commit) {
-        return confirm(repo, branch, commit) == Carriage.CARRIES;
+    boolean carries(Path repo, String taskId, String commit) {
+        return confirm(repo, taskId, commit) == Carriage.CARRIES;
     }
 
     /**

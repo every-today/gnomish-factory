@@ -8,6 +8,7 @@ import com.github.oinsio.gnomish.e2e.gitea.GiteaAvailability
 import com.github.oinsio.gnomish.sandbox.ChildEnvAllowlist
 import com.github.oinsio.gnomish.sandbox.ExecCommand
 import com.github.oinsio.gnomish.sandbox.ResourceLimits
+import com.github.oinsio.gnomish.sandbox.StderrPolicy
 import java.nio.charset.StandardCharsets
 import java.nio.file.Path
 import java.time.InstantSource
@@ -85,8 +86,8 @@ class ContainerReadOnlySurfacesSpec extends Specification implements BareGitRepo
     // from cache instantly, so leaving it local is the race-free choice (same as GitSandboxImage).
 
     private int run(String script) {
-        def handle = env.exec(new ExecCommand(['sh', '-c', script], [:], null, true))
-        handle.output().readAllBytes()
+        def handle = env.exec(new ExecCommand(['sh', '-c', script], [:], null, StderrPolicy.MERGED))
+        handle.output().stream().readAllBytes()
         handle.waitForExit()
     }
 
@@ -108,8 +109,8 @@ class ContainerReadOnlySurfacesSpec extends Specification implements BareGitRepo
             'sh',
             '-c',
             'cat ' + CONTROL_SURFACE
-        ], [:], null, false))
-        def out = new String(handle.output().readAllBytes(), StandardCharsets.UTF_8)
+        ], [:], null, StderrPolicy.PIPED))
+        def out = new String(handle.output().stream().readAllBytes(), StandardCharsets.UTF_8)
         handle.waitForExit()
         out.trim()
     }

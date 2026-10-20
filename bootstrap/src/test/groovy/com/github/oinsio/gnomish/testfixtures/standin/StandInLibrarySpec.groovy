@@ -71,7 +71,7 @@ class StandInLibrarySpec extends Specification {
         preset << presets()
     }
 
-    // Scenario: build/quality-gates / The library holds no link
+    // Scenario: build-system/quality-gates / The library holds no link
     def "FR26: the library holds no link — a preset is a section, and no preset has two"() {
         given:
         List<String> sections = StandIn.tables().sections().values().flatten() as List<String>
@@ -145,13 +145,33 @@ class StandInLibrarySpec extends Specification {
         ]
     }
 
+    /**
+     * Process fakes whose interpreter line is their subject, each with the line it must carry: the
+     * interpreter chains the launch owner's lookup follows before any process exists — an absent interpreter at the first hop and at later ones, a chain
+     * past the lookup's depth, {@code env} naming a missing program, an empty line
+     * (HostProcessLaunchSpec, ExecutableLookupSpec, GitExecLaunchFailureSpec; design D19 as amended
+     * 2026-10-17, second, of fix-terminal-receipt-convergence). Data compared with the committed
+     * files, never written: the fakes themselves are the library's.
+     */
+    private static final Map<String, String> OWN_INTERPRETER = [
+        'missing-interpreter': '#!/nonexistent/gnomish-interpreter',
+        'hop-1': '#!./hop-2.sh',
+        'hop-2': '#!./hop-3.sh',
+        'hop-3': '#!./hop-4.sh',
+        'hop-4': '#!./missing-interpreter.sh',
+        'env-missing': '#!/usr/bin/env gnomish-no-such-interpreter',
+        'empty-interpreter': '#!',
+    ]
+
     def "FR24: process fake #name is a committed executable script under the interpreter line of the library's own"() {
         given:
         Path script = StandIn.process(name)
 
-        expect:
+        expect: 'the library\'s own interpreter line, unless that line is the fake\'s subject (named, with why)'
         Files.isExecutable(script)
-        script.toFile().readLines().first() == StandIn.library().resolve('stand-in.sh').toFile().readLines().first()
+        script.toFile().readLines().first() == (OWN_INTERPRETER.containsKey(name)
+                ? OWN_INTERPRETER[name]
+                : StandIn.library().resolve('stand-in.sh').toFile().readLines().first())
         [
             '/Users',
             '/home',
@@ -183,11 +203,16 @@ class StandInLibrarySpec extends Specification {
         rows.intersect(scripts) == []
     }
 
-    def "FR26: the process table's rows behave as the scripts they replaced — an exit code, a beat, a stall"() {
+    def "FR26: the process table's rows behave as the scripts they replaced — an exit code, a beat, a stall, a leader"() {
         expect:
         answer(StandIn.process('quick')) == [exit: 3, stdout: '']
         answer(StandIn.process('local')) == [exit: 7, stdout: '']
         !start(StandIn.process('stall'), tempDir).waitFor(500, java.util.concurrent.TimeUnit.MILLISECONDS)
+
+        and: 'the group leader prints its readiness line, then stalls'
+        Process leader = start(StandIn.process('group-leader'), tempDir)
+        leader.inputReader().readLine() == StandIn.data('stdout-process#leading').trim()
+        !leader.waitFor(500, java.util.concurrent.TimeUnit.MILLISECONDS)
     }
 
     def "FR24: the library holds no log — nothing ran a recording preset through its own link"() {
@@ -233,7 +258,7 @@ class StandInLibrarySpec extends Specification {
         process.descendants().count() == 0
     }
 
-    // Scenario: build/quality-gates / A recording scenario gets one link, not one script
+    // Scenario: build-system/quality-gates / A recording scenario gets one link, not one script
     def "FR24: a record row appends one block per invocation beside the per-run link, and an answered one none"() {
         given:
         Path git = StandIn.recording(tempDir, 'action-record')
@@ -322,7 +347,7 @@ class StandInLibrarySpec extends Specification {
         answer(git, 'ls-remote', 'origin') == [exit: 2, stdout: 'abc\trefs/heads/main\n']
     }
 
-    // Scenario: build/quality-gates / A refusal that differs only in its text is one preset
+    // Scenario: build-system/quality-gates / A refusal that differs only in its text is one preset
     def "FR26: a #@name answer is the one the per-run link is named after, refused through the preset's own link"() {
         given:
         Path git = StandIn.link(tempDir.resolve('fetch-fsck-refusal'), 'action-answer-by-name')
@@ -411,7 +436,7 @@ class StandInLibrarySpec extends Specification {
         !Files.exists(StandIn.log(own))
     }
 
-    // Scenario: build/quality-gates / The second test starts the stand-in in milliseconds
+    // Scenario: build-system/quality-gates / The second test starts the stand-in in milliseconds
     def "NFR-P2: after the script's first run, a preset starts in milliseconds through a fresh link"() {
         given: 'one untimed run: the script\'s own first-run assessment (macOS), paid once per checkout'
         run(StandIn.git('action-answer'), 'version')

@@ -1,5 +1,6 @@
 package com.github.oinsio.gnomish.sandbox.environment
 
+import com.github.oinsio.gnomish.subprocess.StdinSource
 import spock.lang.Specification
 
 /**
@@ -16,21 +17,23 @@ class ContainerFileChannelBoundarySpec extends Specification {
         new ContainerFileChannel(docker, 'k1', '/gnomish/work', '/gnomish/scratch')
     }
 
-    // FR1, NFR-S3: the channel's content travels on the exec'd process's own pipes — written to its
-    //     stdin, read from its stdout — and no docker call is a copy or an archive transfer
+    // FR1, NFR-S3: the channel's content travels through the exec — handed to the launch owner as the
+    //     client's input (D20 of fix-terminal-receipt-convergence), read from its stdout — and no
+    //     docker call is a copy or an archive transfer
     // Scenario: sandbox/execution-environment / Container file content streams through exec
     def "putFile and readFile stream the content through docker exec, never docker cp or an archive"() {
         given:
         def docker = new ScriptedFileChannelDockerCli()
         def payload = 'factory bytes'.getBytes('UTF-8')
-        docker.process.stdout = 'box bytes'.getBytes('UTF-8')
+        docker.script.stdout = 'box bytes'.getBytes('UTF-8')
 
         when:
         channel(docker).putFile('note.txt', payload)
         def read = channel(docker).readFile('note.txt', 64)
 
-        then: 'the written bytes went into the exec stdin, the read bytes came from its stdout'
-        docker.process.stdin.toByteArray() == payload
+        then: 'the written bytes became the exec\'s input, the read bytes came from its stdout'
+        docker.fed(0) == payload
+        docker.sources[1].is(StdinSource.NONE)
         new String(read.get(), 'UTF-8') == 'box bytes'
 
         and: 'both calls were docker exec, and no argv names cp, an archive, or a host path'
@@ -101,7 +104,7 @@ class ContainerFileChannelBoundarySpec extends Specification {
     def "a plain nonzero exit from the in-box write is propagated, never coerced to 0"() {
         given:
         def docker = new ScriptedFileChannelDockerCli()
-        docker.process.exit = 5
+        docker.script.exit = 5
 
         when:
         channel(docker).putFile('note.txt', 'x'.getBytes())
@@ -117,8 +120,8 @@ class ContainerFileChannelBoundarySpec extends Specification {
     def "a failing in-box write carries the command's stderr in the failure message"() {
         given:
         def docker = new ScriptedFileChannelDockerCli()
-        docker.process.exit = 1
-        docker.process.stderrStream = new ByteArrayInputStream('cat: no space left on device\n'.bytes)
+        docker.script.exit = 1
+        docker.script.stderr = 'cat: no space left on device\n'
 
         when:
         channel(docker).putFile('note.txt', 'x'.getBytes())
@@ -133,8 +136,8 @@ class ContainerFileChannelBoundarySpec extends Specification {
     def "a failing in-box read carries the command's stderr in the failure message"() {
         given:
         def docker = new ScriptedFileChannelDockerCli()
-        docker.process.exit = 2
-        docker.process.stderrStream = new ByteArrayInputStream('head: permission denied'.bytes)
+        docker.script.exit = 2
+        docker.script.stderr = 'head: permission denied'
 
         when:
         channel(docker).readFile('note.txt', 10)

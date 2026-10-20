@@ -2,6 +2,7 @@ package com.github.oinsio.gnomish.sandbox.environment
 
 import com.github.oinsio.gnomish.domain.engine.fake.VirtualClock
 import com.github.oinsio.gnomish.sandbox.ExecHandle
+import com.github.oinsio.gnomish.subprocess.ProcessSupervisor
 import java.time.Duration
 import java.time.Instant
 import java.time.InstantSource
@@ -51,6 +52,28 @@ class HostExecHandleSpec extends Specification {
         then: 'the timeout is reported and the process is dead, not leaked'
         wait instanceof ExecHandle.Wait.TimedOut
         !process.isAlive()
+    }
+
+    // FR5 of make-pipe-reads-non-parking: the handle's output is the process's stdout, minted once
+    // as its ChildOutput, so every reader of the handle drains the same non-parking value
+    def "the output is the process's stdout, the same value on every call"() {
+        given: 'a child that wrote a line to stdout and one to stderr, then exited'
+        def child = FakeProcess.running()
+        child.writeStdout('out line\n')
+        child.writeStderr('err line\n')
+        child.exit(0)
+        def h = new HostExecHandle(child, clock.instant())
+
+        expect:
+        h.output().is(h.output())
+        new String(h.output().stream().readAllBytes(), 'UTF-8') == 'out line\n'
+    }
+
+    // FR19 of fix-terminal-receipt-convergence: the handle answers the post-exit bound from the
+    // supervisor its waits run on, never a constant of its own
+    def "the post-exit bound is the supervisor's"() {
+        expect:
+        handle(['sh', '-c', 'true']).postExitBound() == new ProcessSupervisor().postExitBound()
     }
 
     // FR4: the natural exit code is returned unchanged

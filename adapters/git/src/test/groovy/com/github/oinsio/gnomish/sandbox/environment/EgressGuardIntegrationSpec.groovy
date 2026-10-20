@@ -8,6 +8,7 @@ import com.github.oinsio.gnomish.domain.engine.port.Sleeper
 import com.github.oinsio.gnomish.sandbox.ChildEnvAllowlist
 import com.github.oinsio.gnomish.sandbox.ExecCommand
 import com.github.oinsio.gnomish.sandbox.ResourceLimits
+import com.github.oinsio.gnomish.sandbox.StderrPolicy
 import com.github.oinsio.gnomish.sandbox.TaskExecutionEnvironment
 import java.nio.file.Path
 import java.time.Duration
@@ -118,8 +119,8 @@ class EgressGuardIntegrationSpec extends Specification implements BareGitRepoFix
                         ],
                         [:],
                         null,
-                        true))
-        def output = new String(handle.output().readAllBytes(), 'UTF-8')
+                        StderrPolicy.MERGED))
+        def output = new String(handle.output().stream().readAllBytes(), 'UTF-8')
         def exit = handle.waitForExit()
 
         then: 'the query gets no answer — the internal-only network has no port-53 route out'

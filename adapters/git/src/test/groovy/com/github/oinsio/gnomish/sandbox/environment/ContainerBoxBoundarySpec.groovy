@@ -8,6 +8,7 @@ import com.github.oinsio.gnomish.e2e.gitea.GiteaAvailability
 import com.github.oinsio.gnomish.sandbox.ChildEnvAllowlist
 import com.github.oinsio.gnomish.sandbox.ExecCommand
 import com.github.oinsio.gnomish.sandbox.ResourceLimits
+import com.github.oinsio.gnomish.sandbox.StderrPolicy
 import java.nio.charset.StandardCharsets
 import java.nio.file.Path
 import spock.lang.IgnoreIf
@@ -61,8 +62,8 @@ class ContainerBoxBoundarySpec extends Specification implements BareGitRepoFixtu
     }
 
     private static Map inBox(ContainerTaskExecutionEnvironment e, String script) {
-        def handle = e.exec(new ExecCommand(['sh', '-c', script], [:], null, true))
-        def out = new String(handle.output().readAllBytes(), StandardCharsets.UTF_8).trim()
+        def handle = e.exec(new ExecCommand(['sh', '-c', script], [:], null, StderrPolicy.MERGED))
+        def out = new String(handle.output().stream().readAllBytes(), StandardCharsets.UTF_8).trim()
         [exit: handle.waitForExit(), out: out]
     }
 
@@ -146,8 +147,8 @@ class ContainerBoxBoundarySpec extends Specification implements BareGitRepoFixtu
         forks.exit != 0
         forks.out.contains("can't fork")
 
-        and: 'the box answers again once its short-lived children are gone, and the factory clone is untouched'
-        (1..100).any { inBox(e, 'echo alive').out == 'alive' }
+        and: 'the box forks again once its orphaned children are gone, and the factory clone is untouched'
+        (1..100).any { inBox(e, 'echo alive | cat').out == 'alive' }
         gitOutput(clone, 'status', '--porcelain').isEmpty()
     }
 }

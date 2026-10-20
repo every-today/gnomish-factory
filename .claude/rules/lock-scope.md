@@ -85,6 +85,71 @@ under a monitor no longer starves the scheduler — and for that same reason, sw
 `synchronized` for `ReentrantLock` is not a fix for anything this rule covers. What this rule
 is about is unchanged: the waiters, who are blocked either way.
 
+## A lock inside the JDK: no pipe into a child
+
+A child's standard input is never a pipe the factory writes into. The JDK's `Process` stdin is a
+`BufferedOutputStream` whose `write()` holds the stream's monitor while it is parked on a full
+pipe, so `close()` from another thread blocks on that monitor in `flush()`, an interrupt does
+nothing, and the JDK's reaper thread blocks behind it in the `synchronized` `processExited`. A
+descendant that inherited the read end and never drains it holds the pump forever, and no bound
+can be put on it from outside. So a design that needs to hand a child bytes
+passes them to the launch owner as a `StdinSource` (a file the child inherits, or `/dev/null`),
+and a new stdin pump is refused at design; the `lifecycle/subprocess-supervision` capability owns
+the rule ("A child's input is a file or nothing").
+
+The failure this exists for: the factory's stdin writers — `GitExecStreams.feed`,
+`ContainerFileChannel.pump`, `ChildProcessStdin.feed` and the calling-thread write of
+`CaptureRunner.run` — were each parked for good by a descendant holding the child's stdin, and
+every other launch left the JDK's default pipe open for one to inherit. An amendment of design
+D15 of `fix-terminal-receipt-convergence` tried to bound the writers as the read side was then
+bounded, by closing the write end; on JDK 25.0.3 the close blocked on the monitor. Design D20 of
+that change removed every pump instead.
+
+The read side is no exception. A `read()` parked on a pipe a descendant still holds is beyond
+every JDK mechanism on Linux: `close()` from another thread and `Thread.interrupt()` wake
+nothing, the thread stays parked until the holder dies, and while it holds the stream's monitor
+the JDK's reaper blocks behind it in the `synchronized` `processExited` (JDK-8169565). So the
+factory never parks in a read of a child's pipe and closes no pipe of a child: the one owner of
+the readable side, `ChildOutput` in `:subprocess`, reads only what `available()` reports, waits
+one tick on its own thread otherwise, stops on a flag, and leaves the pipe to the JDK's reaper,
+which drains and closes it at the exit (`docs/adr/0018-non-parking-pipe-reads.md`; the
+`lifecycle/subprocess-supervision` capability owns the requirement, "Post-exit output is bounded
+without a parked read").
+
+The failure this exists for: design D15 of `fix-terminal-receipt-convergence` bounded every
+reader by closing the stream at the post-exit bound, on the premise that a close ends a read
+parked on the pipe — measured on macOS only, where it does. On Linux it does not, and the first
+Linux CI run after that change (run 39117545428) was red; the test doubles had modelled macOS.
+`make-pipe-reads-non-parking` replaced the close with the non-parking read.
+
+## Writers from different processes
+
+A lock in the JVM covers one process. A step that two factory processes may run at once on one
+clone — `take <ref>` beside a `serve` daemon's janitor, two `take`s of one finished task — is
+guarded only by what the medium itself locks, and git locks its media unequally: an object write
+takes no lock (content-addressed), a ref transaction takes the ref store's lock, retries it
+(`reftable.lockTimeout`) and decides by compare-and-swap, and the worktree index takes
+`index.lock` once, with no retry, no compare-and-swap, and no cleanup after a kill.
+
+So a design that claims a step is safe across instances — an NFR "idempotent across instances",
+a risk row "the loser stands down" — lists the step's sequence in `design.md` with the lock each
+step takes and what decides the winner, the way `crash-consistency.md` item 1 lists kill windows.
+**The first step that takes a lock with no compare-and-swap behind it is the race**: a loser
+there has nothing to re-read, because the winner has not committed yet. Such a step is removed
+from the sequence (an object-built commit needs no index) or moved behind the decision, never
+retried. The table is paired with a race spec on real threads, named in the single-owner table
+beside the identity spec. A `synchronized` block, a `ReentrantLock` or any other lock in the JVM
+is no answer to this question: the second writer is another process.
+
+The failure this exists for: the host delivered cleanup
+(`fix-terminal-receipt-convergence`, task 3.3) ran `git rm` in the shared task worktree before
+its compare-and-swap; the design's risk row said "the ref update is compare-and-swap on both
+media", true of the last step only. Two host cleanups met on `index.lock`, and the loser
+re-read a tip the winner had not yet moved and failed. Design D8 of that change removed the
+step: the host cleanup is now built from objects through `GitObjectsTerminalCommits.cleanUp`
+(a private index, no worktree), so the ref transaction is the first and only lock two writers
+share; its step table is the model, and `DeliveredCleanupRaceSpec` is the race spec.
+
 ## Specs
 
 The property is invisible to a single-threaded spec — the one that would catch it drives real
@@ -111,3 +176,10 @@ a change that adds or widens one says in its artifacts which case it is: state-g
 5. On re-entry, revalidate — or say why no revalidation is possible, rather than writing a
    guard that cannot fire.
 6. A spec with real threads pins the waiter's promptness.
+7. A step two factory processes may run at once: `design.md` lists its sequence with the lock
+   each step takes, the first lock with no compare-and-swap behind it is removed or moved
+   behind the decision, and a real-thread race spec is named in the single-owner table.
+8. A child that needs input gets it through the launch owner's `StdinSource`, never from a
+   thread writing into its stdin pipe.
+9. A reader of a child's output takes a `ChildOutput`, never the raw stream: no thread parks
+   in a read of a child's pipe, and nothing closes one.

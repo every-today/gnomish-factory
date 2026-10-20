@@ -194,6 +194,46 @@ Gates, both in `:bootstrap`:
 A new spawner that needs a variable the kept set lacks adds it to `TestChildEnvironment`, not
 at the call site.
 
+### The Docker client configuration is replaced, like git's
+
+The operator's git configuration is a medium the build replaces (`AdversarialGitConfig`, below);
+the operator's Docker client configuration is another. Testcontainers reads registry credentials
+from `$DOCKER_CONFIG` or `~/.docker` and runs the helper it names, on every container it creates
+and once more in every JVM, PIT's minions included; the `docker` CLI a fixture or `DockerCli`
+runs does the same on `docker build` and on implicit pulls, and also applies the operator's
+plugin hooks and injects their `proxies` into every container. None of that is the factory's
+behaviour under test, and on macOS the helper is a system prompt.
+
+The failure this exists for: the final gate of `fix-terminal-receipt-convergence` (task 6.9,
+2026-10-15) ran on a macOS machine whose configuration names `"credsStore": "desktop"`. A PIT
+minion's `docker-credential-desktop get` blocked for over 20 s on a "would like to access data
+from other apps" prompt, and an unattended gate stalls until a human answers.
+
+So `test-conventions` applies `TestDockerEnvironment` (`build-logic`; design D14 of that change)
+to every `Test` task and to `pitest`, beside the strip above:
+
+- `DOCKER_CONFIG` names a per-task copy of the committed
+  `test-fixtures/src/main/resources/docker-config/config.json`, which names no credential helper,
+  hook or proxy; its `cliPluginsExtraDirs` names the operator's `cli-plugins` directory when one
+  exists, so `docker build` still finds `buildx`.
+- `DOCKER_HOST` is the operator's own when set, otherwise the current context's endpoint from one
+  `docker context inspect` per build; `DOCKER_CONTEXT` is removed. On a macOS host with a
+  `unix://` endpoint, `TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE` is `/var/run/docker.sock` unless the
+  operator set it. A context endpoint one variable cannot carry (`ssh://`, TLS material) fails the
+  build with the variables to set; `DOCKER_HOST`, `DOCKER_CERT_PATH`, `DOCKER_TLS_VERIFY` and
+  `TESTCONTAINERS_*` set by the operator reach the tests unchanged.
+- Only the committed file is a task input. The endpoint, the override and the plugin directory
+  differ per machine and are not inputs, so a cache entry is shared between macOS and Linux.
+
+No spec or fixture sets a Docker configuration of its own or reads `~/.docker`; a child process
+reaches the copy by inheritance or through `TestChildEnvironment`. The gates:
+`TestDockerEnvironmentSpec` in `:bootstrap` asserts the effect in the real test JVM, and
+`TestDockerEnvironmentFunctionalSpec` with `TestDockerConventionsFunctionalSpec` in `build-logic`
+pin each branch of the composition on inner builds. A project script that calls `docker`
+outside Gradle (`scripts/linux-specs.sh`, the Linux spec runner) applies the same configuration
+— a copy of the committed file and the endpoint from the operator's context — and is a declared
+pair with `TestDockerEnvironment` (`manual-sync-pairs.md`).
+
 ## Stand-ins are prepared, not generated
 
 A stand-in binary a spec runs in place of `git`, `docker`, the agent CLI, a hook or a supervised
@@ -236,7 +276,8 @@ cost report. The same mechanism slowed the ordinary `test` task and PIT's covera
   (`ContainerGitMechanicsSpec`, `FakeAgentSandboxImage` — Linux inside, a host link would not
   resolve; mount the library directory instead), specs of shipped scripts (`LauncherScriptSpec`,
   `ReleasePreflightScriptSpec`, `NightlyMutationIssueScriptSpec`), which run once per build, and
-  `StallingGitOwnerSpec`, whose detector is fed shebang text as data.
+  `StallingGitOwnerSpec`, whose detector is fed shebang text as data, and `StandInLibrarySpec`,
+  which compares the interpreter lines of the process fakes whose line is their subject as data.
 - **The gate**: `StandInOwnerSpec` in `:bootstrap` scans every module's test tree and
   `test-fixtures/src/main` (comments stripped) for three shapes — an executable bit set from code
   (`executable = true`, `setExecutable(`), shebang text (`#!/`, which a directly run script needs),
@@ -249,6 +290,35 @@ Before designing anything "per test" — a script, a configuration file, a repos
 truly varies per run. Everything constant becomes a committed preset; only the remainder is
 created, by one owner. The project record of that question is `design-decisions.md`,
 "Alternative zero".
+
+## A scheduling order is never a premise
+
+A spec never relies on which of two threads or processes runs first — "the drain entered `read()`
+before the child exited", "the script's last write lands after the wait", "the pump is parked by
+now". An order that holds on a workstation is a race on a loaded runner. A spec that needs an
+order **makes** it: the code under test is handed `FakeProcess` (`:test-fixtures`, the one
+`Process` fake) through its `ProcessLaunch`, and the spec gates the exit (`exit`), the pipes
+(`holdOpen`, `release`) and the steps between (`awaitStdoutRead`, `onWaitReturn`) itself. A real
+process stays only where the OS is the subject (a group the sweep must end, a pipe a grandchild
+holds), and then asserts no order: "returned within the bound while the holder is provably alive",
+with a bound of at least ten post-exit bounds. A sleep in a stand-in that buys an order is the
+same premise hidden, and so is a retry (`@Retry`, Gradle's retry plugin): both keep the race and
+make it invisible.
+
+The failure this exists for: the Linux gate of task 7.4 of `fix-terminal-receipt-convergence`
+(2026-10-16, CI run 38879822474) failed on `ProcessSupervisorInterruptSpec`, which that change had
+not touched. Four specs — `ProcessSupervisorInterruptSpec`, `CaptureRunnerDrainSpec`,
+`GitExecPumpThreadsSpec`, `ShellCommandCheckRunnerTimeoutSpec` — stated or hid the order "the
+drain's first `read()`, then the child's exit": the JDK's reaper drains a pipe at the exit on its
+own thread, so a drain that arrives a few milliseconds late sees end-of-file instead (the window
+measured at 2–12 ms). `trailing.sh`'s 0.5 s linger, added for a CI failure of 2026-09-13, was the
+precedent of hiding it. The analysis found a production class behind the flake — no bound on the
+post-exit join (design D15–D17 of that change) — and the four specs were rewritten on `FakeProcess`
+(D16; NFR-R4).
+
+How this is checked: no gate can see a premise, so review owns it, against this section. The
+measurement is NFR-R4 of the same change: the four specs, by name, 20 runs each under two busy
+threads, 80 of 80 green on macOS, and the Linux CI job green.
 
 ## Diagnosing a slow gate
 
@@ -285,11 +355,21 @@ read are every module's `src/test`, `build-checks/*/src/test` and `build-logic/s
 
 The gate `checkSpecContract` (`SpecContractCheck` in `build-logic`, also
 `scripts/check-spec-contract.sh`) checks both directions: a scenario with no marker and no
-exemption is a finding, and so is a marker naming no scenario of a main spec (a rename left it
-dangling) and a malformed marker line — any line opening with the marker's lead that does not
-continue as `<spec-id> / <title>`, so no second, informal spelling survives. A delta's scenarios
-are not linked while the change is unarchived; the gate holds the link once they merge into
-`openspec/specs/`. Write the marker with the test anyway.
+exemption is a finding, and so is a dangling marker and a malformed marker line — any line
+opening with the marker's lead that does not continue as `<spec-id> / <title>`, so no second,
+informal spelling survives. A marker may name a scenario of a main spec or one under an ADDED or
+MODIFIED requirement in the delta of an unarchived change; anything else is dangling (a rename
+left it behind, or the title exists only under REMOVED or only in `archive/`). So write the
+marker with the test, while the change is still unarchived: it resolves through the delta, and
+after the archive through the main spec, with no edit. A delta's scenarios never need a marker;
+the gate requires one once they merge into `openspec/specs/`.
+
+A requirement an unarchived delta REMOVES (same title, same capability path; a delta under
+`archive/` retires nothing) retires its main-spec scenarios: they need no link from the change
+that removes them. Retirement only relaxes the gate — a marker or an exemption line still naming
+a retired scenario is neither dangling nor stale before the archive. The removing change deletes
+its leftover markers and exemption lines itself; the archive's own gate run, once the scenario
+has left the main spec, reports any it forgot.
 
 Gotcha: the reader matches the lead at the start of a line, comment prefix allowed, in every file
 of the scanned trees. A fixture string in a test that builds marker text must not start a line
@@ -297,7 +377,7 @@ with the literal; assemble it (`'// ' + 'Scenario: …'`) or indent it inside a 
 
 **The exemption form.** A scenario verified by something other than a test is listed in its
 capability's exemption file, `config/spec-contract-exemptions/<spec-id>.txt` with every `/` of
-the spec id replaced by `-` (`build/ci` → `build-ci.txt`). The header line declares the
+the spec id replaced by `-` (`build-system/ci` → `build-system-ci.txt`). The header line declares the
 capability, and it alone decides the spec id; the file name must match it, or the gate reports
 the file. Blank lines and `#` comments are allowed; nothing else lives in the directory (a stray
 file is a finding), so the form is documented here, not in a README there:

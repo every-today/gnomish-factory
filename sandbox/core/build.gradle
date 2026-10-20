@@ -41,6 +41,14 @@ dependencies {
     // public surface, so every consumer compiles against it too.
     api project(':untrustedtext')
 
+    // The subprocess leaf (design D9 of bound-subprocess-commands: dependency-free, so the reach it
+    // adds is nil): `CapturedExec` reads an exec handle's output on its `Drain`, joined with the
+    // handle's post-exit bound, and judges a cut through `CutCaptureException.refuses` (design D15,
+    // D17 of fix-terminal-receipt-convergence). `api`, not `implementation`: `ExecHandle.output()`
+    // returns its `ChildOutput` (design D1 of make-pipe-reads-non-parking), so every consumer of the
+    // port compiles against it too.
+    api project(':subprocess')
+
     // @ConfigurationProperties / @Name on the three configuration records
     // (design D1's layer-home rule: root config-properties types follow their
     // consumers). The bare `spring-boot` artifact, not the starter: this module
@@ -55,9 +63,10 @@ dependencies {
     // every module compiling against them needs its class, or javac reports its constants unknown.
     api project(':operatorconfig')
 
-    // No `:test-fixtures` edge (unlike `:domain` / `:gitobjects`): the port
-    // layer's specs construct their subjects directly and need no shared fake,
-    // and the dependency-analysis gate fails an unused declaration.
+    // The capture specs' `CannedExecHandle` mints its `ChildOutput` from the one `Process` double,
+    // `FakeProcess` (design D6 of make-pipe-reads-non-parking): a stream double can no longer be
+    // handed to the port.
+    testImplementation project(':test-fixtures')
 }
 
 // The sandbox PORT layer sits directly above the domain (FR2, design D11): it
@@ -74,6 +83,10 @@ layering {
         // source in this module names it; the layering gate walks the transitive graph, so the
         // reach is listed where it arrives.
         ':operatorevent',
+        // The subprocess leaf (design D9 of bound-subprocess-commands; D17 of
+        // fix-terminal-receipt-convergence): declared directly above — `CapturedExec` joins its
+        // drain on it. Dependency-free, so this edge reaches nothing further.
+        ':subprocess',
         // The untrusted-text leaf (FR11, design D9 of split-logtext-leaves; FR1, design D3
         // of type-untrusted-text): declared directly above — `CapturedExec.output` is a
         // carrier, so this module's own signatures name it.

@@ -9,6 +9,7 @@ import com.github.oinsio.gnomish.sandbox.ChildEnvAllowlist
 import com.github.oinsio.gnomish.sandbox.ExecCommand
 import com.github.oinsio.gnomish.sandbox.ExecHandle
 import com.github.oinsio.gnomish.sandbox.TaskExecutionEnvironment
+import com.github.oinsio.gnomish.subprocess.ChildOutput
 import java.nio.file.Path
 import java.time.Duration
 import java.time.Instant
@@ -38,10 +39,10 @@ class RoundInterruptedWaitSpec extends Specification {
         when:
         ExecutorRoundExecution.run(
                 new AgentRoundEquipment(
-                        new FactoryProperties('factory-01', 'claude', Duration.ofSeconds(30), null, null, null),
+                        new FactoryProperties('factory-01', 'claude', null, null),
                         new VirtualClock(),
                         { event -> },
-                        new AgentRoundResultExtractor(), ChildEnvAllowlist.none()),
+                        new AgentRoundResultExtractor(), ChildEnvAllowlist.none(), RoundScratchDirectory.HOST_TEMP),
                 new DecisionFileReader(),
                 StageExecutorRequests.request(workspaceDir),
                 'prompt',
@@ -65,10 +66,10 @@ class RoundInterruptedWaitSpec extends Specification {
         when:
         def vote = JudgeRoundExecution.run(
                 new AgentRoundEquipment(
-                        new FactoryProperties('factory-01', 'claude', Duration.ofSeconds(30), null, null, null),
+                        new FactoryProperties('factory-01', 'claude', null, null),
                         new VirtualClock(),
                         { event -> },
-                        new AgentRoundResultExtractor(), ChildEnvAllowlist.none()),
+                        new AgentRoundResultExtractor(), ChildEnvAllowlist.none(), RoundScratchDirectory.HOST_TEMP),
                 new JudgeVerdictExtractor(),
                 new VerifyCheck.Judge('criteria.md', 'claude-fake-judge-1', [:], 1),
                 environment,
@@ -89,8 +90,8 @@ class RoundInterruptedWaitSpec extends Specification {
 class InterruptedWaitExecHandle implements ExecHandle {
 
     @Override
-    InputStream output() {
-        new ByteArrayInputStream(new byte[0])
+    ChildOutput output() {
+        CannedOutputs.written('')
     }
 
     @Override
@@ -106,5 +107,10 @@ class InterruptedWaitExecHandle implements ExecHandle {
     @Override
     int waitForExit() {
         0
+    }
+
+    @Override
+    Duration postExitBound() {
+        Duration.ofSeconds(1)
     }
 }

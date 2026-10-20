@@ -1,5 +1,7 @@
 package com.github.oinsio.gnomish.gitobjects;
 
+import com.github.oinsio.gnomish.subprocess.ProcessLaunch;
+import com.github.oinsio.gnomish.subprocess.ProcessSupervisor;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
@@ -12,6 +14,12 @@ import java.util.Optional;
  * reachable, and {@link #commit} builds a plumbing commit and
  * advances a ref with an atomic compare-and-swap. Deterministic by construction: the caller supplies
  * all commit metadata, so fixed inputs yield a fixed commit id.
+ *
+ * <p>It works over any {@code .git} — a factory clone a container run reads harvested refs into,
+ * and the host clone a host-mode task branch lives in alike. Nothing in it is container-specific:
+ * it needs a git dir and a temp dir for its private indexes, never a worktree, a box or the
+ * worktree's index lock, which is why the cleanup commit of both media is written through it
+ * (design D8 of fix-terminal-receipt-convergence).
  *
  * <p>Implements FR25 of add-sandbox-core.
  */
@@ -41,11 +49,16 @@ public final class GitObjects {
 
     /** Test seam: as {@link #open(Path, Path)} but with an explicit git binary. */
     public static GitObjects open(Path gitDir, Path tempDir, String gitBinary) {
-        return new GitObjects(new GitExec(gitDir, gitBinary), tempDir);
+        // The library's short path supplies the subprocess module's one production launch and a
+        // default supervisor — Local Defaults of a leaf with no second production form (design D16
+        // as amended of fix-terminal-receipt-convergence); a spec hands a fake launch to GitExec.
+        return new GitObjects(
+                new GitExec(gitDir, gitBinary, new ProcessSupervisor(), ProcessLaunch.grouped()), tempDir);
     }
 
     /**
-     * Resolves {@code ref} to the commit it points at, or empty if the ref does not exist.
+     * Resolves {@code ref} to the commit it points at, or empty if the ref does not exist; a
+     * {@link GitObjectsException} when git exited zero without printing one full object id.
      *
      * <p>{@code --end-of-options} — not {@code --}, which in {@code rev-parse} starts a
      * <em>pathspec</em> and would make every revision unresolvable — so a caller-supplied name is
@@ -57,7 +70,9 @@ public final class GitObjects {
         if (result.exitCode() != 0) {
             return Optional.empty();
         }
-        return Optional.of(ObjectId.of(result.stdoutText()));
+        // A zero exit with no full object id is refused as the library's own failure, never an
+        // IllegalArgumentException its callers do not classify (FR17 of fix-terminal-receipt-convergence).
+        return Optional.of(CommitBuilder.objectId(result, "rev-parse"));
     }
 
     /**
@@ -76,7 +91,7 @@ public final class GitObjects {
             throw new MissingObjectException("no blob at '" + path + "' in " + commit.hex() + ": "
                     + result.stderr().strip());
         }
-        if (result.truncated()) {
+        if (result.overflowed()) {
             throw new BlobTooLargeException("blob at '" + path + "' exceeds " + sizeCap + " bytes");
         }
         return result.stdout();

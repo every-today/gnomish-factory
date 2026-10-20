@@ -203,7 +203,7 @@ terms) live in `.claude/rules/process-invariants.md`.
 - **Round** — one iteration of the factory's execution loop for a task; round
   boundaries are where claim-loss and staleness decisions take effect.
 - **Agent round equipment** — what every agent round is launched with: the
-  installation's agent settings (CLI binary, tail drain grace), the instant
+  installation's agent settings (the CLI binary), the instant
   source that stamps the round, the live-progress subscriber and the extractor that
   shapes the round's essential result. Built once per owner (the stage
   executor, the judge voter) and taken whole by that owner's round
@@ -234,9 +234,9 @@ checklist for new transitions lives in `.claude/rules/crash-consistency.md`.
   envelope versions of its **registered commit** mapped to exactly one name
   from a closed set. Classified at the registered commit, never at the tip;
   the tip contributes one fact, its relation to the register (at it, above it,
-  diverged from it, or no register at all — type `TipRelation`), and a
-  diverged tip or a missing register over an envelope classifies `Unknown`
-  with a diagnosis. Classified by content alone — the claim epoch is
+  diverged from it, or no register at all — type `TipRelation`). A diverged
+  tip classifies `Unknown` with a diagnosis; a missing register over an
+  envelope classifies `Unregistered`, and over no envelope `Bare`. Classified by content alone — the claim epoch is
   provenance, not an input. Total by construction — every combination classifies, `Unknown`
   included, and classification never throws on content. The closed set and the
   meaning of each name are owned by the `task-branch-contract` capability, in
@@ -248,6 +248,34 @@ checklist for new transitions lives in `.claude/rules/crash-consistency.md`.
   for the `Answered` shape (that name belongs to the human's answer record),
   `Paused` for the `AwaitingApproval` shape (that name belongs to a
   `TaskOutcome` variant).
+- **Unregistered** — the **branch shape** of a task branch whose tip carries a
+  factory **envelope** while this clone holds no **factory register** for the
+  task, as an operator's or an IDE's `git fetch`, or a `git clone`, leaves one.
+  A state of the clone, not of the branch: nothing is read at a register that
+  is not there, its **recovery owner** is the touchpoint fetch, which lands the
+  register beside the branch, and the branch then classifies by its content. A
+  branch still `Unregistered` after a reader's own read is quarantined like
+  any shape no register can roll forward from. Only a branch the clone holds
+  as a remote-tracking ref is fetched that way; a local head without its
+  register is not, and stays `Unregistered` (a deferral of the same change,
+  its proposal NG5). Type:
+  `BranchShape.Unregistered(register, tip)` (introduced by
+  `fix-terminal-receipt-convergence`, design D13). *Not:* `Unknown`, which is a
+  present and diverged pair (or a legal but unrecognized combination); *Not:*
+  `Bare`, whose tip carries no envelope at all.
+- **Branch adoption** — making a task branch that a clone holds only as a
+  remote-tracking ref (`refs/remotes/origin/gnomish/<task>`) a local branch,
+  by one compare-and-swap ref create: one `git update-ref --stdin` transaction
+  creates `refs/heads/gnomish/<task>` at the tracking tip only if no such head
+  exists yet. The factory register is not touched: the touchpoint fetch that
+  located the branch already landed it. Two adopters in one clone race only at
+  that create; the loser finds the winner's head and continues on it. Nothing
+  undoes an adoption. Owner: `TaskBranchAdoption`, behind the git port's
+  `ensureLocalTaskBranch` and `adopt`; answer type `BranchAdoption` (`Adopted`, `AlreadyLocal`,
+  `Nowhere`) (introduced by `fix-terminal-receipt-convergence`, design D9,
+  D12). *Not:* a checkout (no working copy is touched, and git resolves no
+  name); *Not:* a fresh task's branch creation, which makes a branch that
+  exists nowhere yet.
 - **Tracker shape** — the same total classification applied to the tracker
   medium: state labels, claim footprint, and boundary markers mapped to
   exactly one name, `Foreign` included for out-of-protocol combinations.
@@ -255,6 +283,14 @@ checklist for new transitions lives in `.claude/rules/crash-consistency.md`.
   its table are owned by the `claim-heartbeat` capability, in its "Total
   tracker-shape classification with one recovery owner" requirement
   (`openspec/specs/lifecycle/claim-heartbeat/spec.md`).
+- **Tenure boundary** — the kind of the last boundary marker (park, finish,
+  abort, stale-claim removal) on a task's whole tracker thread, in posting
+  order, whatever claim markers follow it; null when the thread has none.
+  Reported by `fetchTask` as `TrackerTask.tenureBoundary`, and the one fact a
+  receipt probe reads to confirm a park or finish after its own pickup has
+  claimed the task again. *Not:* the claim-scoped boundary the shape facts
+  carry for the reaper (`TrackerFacts.latestBoundary`), which is null once a
+  claim follows the boundary.
 - **Sweep universe** — the set of tasks a sweep's own listing queries
   enumerate (the union of the ready and open listings). The ordering rule that
   keeps every kill window inside it: the label write admitting a task into the
@@ -277,7 +313,8 @@ checklist for new transitions lives in `.claude/rules/crash-consistency.md`.
   register together. It is the trust anchor of the branch's record in the
   container tier; in host mode the gnome can move it, so it carries no
   integrity claim there, and its anomalies are signals only. Owner in the
-  clone: `FactoryRegister`; ref name: `RegisterRef` (introduced by
+  clone: `FactoryRegister`; ref name: `RegisterRef`, spelled from a task id by
+  `FactoryRegisterRefs` (introduced by
   `tighten-spec-contract`, design D13, D19). *Not:* a **registered clone** of
   Operator configuration, which is a clone directory listed in a project
   file.
@@ -745,8 +782,9 @@ trusted/task tier split, and the law-root rule.
   output drained concurrently with the running process, an optional hard
   deadline on the wait, and on expiry or interruption a two-phase kill of the
   whole process tree followed by a reap. It owns mechanics only — logging,
-  output caps, stdin feeds, credential scrubbing and what an exit code means
-  stay with the caller. *Not:* a supervisor in the process-manager sense — it
+  output caps, the bytes given to a child as input, credential scrubbing and
+  what an exit code means stay with the caller; how that input reaches the
+  child is the **launch owner**'s. *Not:* a supervisor in the process-manager sense — it
   never restarts anything.
 - **Termination** — how a supervised invocation ended, named separately from
   the exit code: `EXITED` (the process chose its own code), `TIMED_OUT` (the
@@ -754,13 +792,104 @@ trusted/task tier split, and the law-root rule.
   was interrupted and the tree was killed). *Never:* a sentinel exit code such
   as `-1` for interruption — collapsing the three into one number is the defect
   the term exists to remove.
-- **Drain** — one output stream read on a thread of its own, concurrently with
-  the running process, so neither a full OS pipe buffer nor a child that never
-  closes its stdout can block the wait.
+- **Child output** — the readable side of one of a child's pipes, stdout or
+  stderr, as a typed value (`ChildOutput` in `:subprocess`): minted only from a
+  started `Process` (`ChildOutput.stdout(process)`, `ChildOutput.stderr(process)`),
+  so it carries the process beside its stream and the exit signal is wired by
+  construction. It is the only thing a drain can start from, and the
+  environment port hands it across as `ExecHandle.output()`. It reads without
+  parking — only the bytes the pipe reports available, otherwise one tick of
+  waiting — and closes nothing: the pipe is the JDK's to close at the exit. Its
+  pull view (`ChildOutput.stream()`) runs the same steps on the caller's thread,
+  and its `close()` is a stop. The rule and its measurement are ADR 0018.
+  *Not:* the bare `InputStream` of a `Process`, which no reader outside the owner
+  obtains.
+- **Drain** — one child output read concurrently with the running process, so
+  neither a full OS pipe buffer nor a descendant that keeps the pipe open can
+  block the wait. It reads what is available and never parks in a blocking
+  read; it ends on its own at the first query after the child's exit that
+  finds nothing available, or early when it is stopped. Two forms of one owner:
+  the push form (`Drain`, chunks handed to a sink on the drain's own thread)
+  and the pull view (`ChildOutput.stream()`). The reasoning is ADR 0018.
+  *Not:* a thread parked in `read()` until end-of-file — no factory thread
+  waits that way on any OS.
 - **Kill grace** — the bounded wait between the cooperative terminate and the
   forced kill, so git and docker can remove their lock and temporary files on a
   catchable signal. A bound on waiting, not a sleep: a tree that stops early
   returns early.
+- **Round scratch directory** — the one host directory an agent round writes
+  outside the task branch, on the host as for a box round: a fresh temp
+  directory per round that takes the CLI's stderr as a file
+  (`StderrPolicy.ToFile`; in a box, through the host-side `docker exec`
+  client's stderr), whose tail the round reads into its diagnostics after the
+  exit — the failure's detail on a round that did not succeed, one DEBUG line
+  on one that did — and which the round removes however it ended. Owned by
+  `RoundScratchDirectory` in `adapters/agent` on both media. *Not:* the
+  scratch area of an execution environment (`/gnomish/scratch` in a box), nor
+  the decision file's place — in container mode that file lives in the task
+  branch.
+- **Post-exit bound** — the one wait every reader of a child's output allows
+  after the child's exit for its drains to end: the kill grace
+  plus a fixed margin (`ProcessSupervisor.postExitBound()`, 7 s by default),
+  carried across the environment port as `ExecHandle.postExitBound()`. The
+  reader waits at most the bound for its drain to end, then stops the drain and
+  flags the capture as cut; nothing is closed and no read is interrupted. On a
+  real process the JDK's reaper closes the pipe at the exit, so a drain ends
+  within ticks of it even while a descendant holds the pipe, and the bound is a
+  safety net (ADR 0018). A bound on a wait measured from the exit, never
+  from the start, and never a reader's own constant. *Not:* a deadline on the
+  command — a long command is not cut short by it.
+- **Cut capture** — a capture whose drain the post-exit bound cut: the drain
+  had not ended when the bound expired, so the stdout held may be a prefix.
+  On a clean exit (exit code 0, `EXITED`) it is refused as a value —
+  `CaptureRunner.await` throws `CutCaptureException`, carrying the partial
+  capture — so no parser reads a prefix as a whole answer; a failed, timed-out
+  or interrupted invocation keeps its partial output readable, the cut named
+  in its detail. The flag means "the drain had not ended", not "bytes lost".
+  On a real process it is reached only on the safety net — a descendant that
+  outwrites the reaper's own drain at the exit — since the reaper closes the
+  pipe at the exit (ADR 0018). *Not:* the output cap a reader applies itself (`GitExec`'s stdout cap) — a
+  limit the caller chose, not a pipe left open.
+- **Launch owner** — the one component that starts a supervised OS process:
+  the role `ProcessLaunch` in `:subprocess`, whose only production form is
+  `ProcessLaunch.grouped()` (`GroupedLaunch`). It resolves the executable and
+  its `#!` interpreter chain before the launcher (`ExecutableLookup`),
+  prefixes the platform's launcher (`HostLauncher`: `setsid` on Linux, a perl
+  one-liner on macOS) so the child leads a new process group, sets the child's
+  stdin from its **stdin source**, and registers the group in the **live group
+  registry**. Specs hand a `FakeProcess` in through the same role. *Not:* a
+  plain, ungrouped launch — none exists in production; the `docker` client of
+  a box command is a host process launched the same way.
+- **Stdin source** — what a launched child reads as its standard input,
+  handed to the launch owner with every launch (`StdinSource` in
+  `:subprocess`): `StdinSource.NONE` is `/dev/null`, so the child reads
+  end-of-file at once and no pipe exists for a descendant to hold;
+  `StdinSource.of(bytes)` is an owner-only file in the launch owner's input
+  directory, written in full before the start and deleted right after it, read
+  by the child through the descriptor it inherited. The factory never writes
+  into a child's stdin pipe.
+- **Process group sweep** — the one post-exit kill of a launched child's
+  process group (`ProcessGroupSweep` in `:subprocess`), run by every waiter
+  after the wait resolves, however it resolved: `kill -KILL -- -<pid>` repeated
+  while the zero-signal probe `kill -0 -- -<pid>` is answered, at most five
+  rounds, ending when the probe is refused — never judged by the text of
+  `kill`'s error. It ends the descendants the child lost to reparenting, which
+  no snapshot of the process tree lists. Best-effort hygiene, not a fence: a
+  member that changed its uid or called `setsid` itself is beyond it. *Not:*
+  the cooperative tree kill of the kill grace, which it follows.
+- **Live group registry** — the process-wide set of launched groups no
+  process group sweep has yet found empty (`LiveGroups` in `:subprocess`): the
+  launch owner registers the child's pid once the start returns, the sweep
+  deregisters it on a refused probe, and only the **shutdown step** sweeps it
+  whole. A launch that threw registers nothing.
+- **Shutdown step** — what the factory does to its children when it is told
+  to stop, for every command (`RealProcessTreeKiller.killDescendants`): the
+  cooperative kill of the JVM's descendants, then a process group sweep of
+  every group in the live group registry. Run by `serve`'s shutdown and, for a
+  command with no hook of its own (`run`, `take`), by the generic signal hook
+  before the context closes — the only way an operator's Ctrl-C reaches a child
+  that, in its own session, has no controlling terminal. *Not:* a guarantee
+  under `SIGKILL`, which runs no hook.
 
 ## Test stand-ins
 
@@ -998,6 +1127,13 @@ run and answer them is the developer guide's *Per-module verification* section.
   Introduced by `tighten-spec-contract`. *Not:* OpenSpec's own validation
   (`openspec validate`), which checks a spec's structure and knows nothing of
   traceability or tests.
+- **Linux spec runner** — the committed container that runs named Gradle tasks and specs of
+  the factory's own build on Linux from a developer's machine: `scripts/linux-specs.sh` over
+  `scripts/linux-runner/Dockerfile`, the platform of the CI `build` job (Temurin 25, git ≥ 2.51),
+  on a copy of the working tree, as a non-root user. `verification-scope.md` runs platform specs
+  through it before the root `check` and before a push, so CI is never the first Linux signal.
+  Introduced by `make-pipe-reads-non-parking` (ADR 0018, "The method rule"). *Not:* the sandbox
+  base image, the box a gnome runs in.
 
 ## Release and distribution
 

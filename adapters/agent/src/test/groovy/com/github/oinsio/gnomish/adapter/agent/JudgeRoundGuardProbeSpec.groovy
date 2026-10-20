@@ -9,7 +9,6 @@ import com.github.oinsio.gnomish.sandbox.ChildEnvAllowlist
 import com.github.oinsio.gnomish.sandbox.ExecHandle
 import com.github.oinsio.gnomish.sandbox.TaskExecutionEnvironment
 import com.github.oinsio.gnomish.sandbox.environment.GuardUnavailableException
-import java.nio.charset.StandardCharsets
 import java.time.Duration
 import spock.lang.Specification
 
@@ -29,9 +28,9 @@ class JudgeRoundGuardProbeSpec extends Specification {
     private Vote vote(TaskExecutionEnvironment environment) {
         JudgeRoundExecution.run(
                 new AgentRoundEquipment(
-                        new FactoryProperties('factory-01', 'claude', Duration.ofSeconds(5), null, null, null),
+                        new FactoryProperties('factory-01', 'claude', null, null),
                         new VirtualClock(), { event -> },
-                        new AgentRoundResultExtractor(), ChildEnvAllowlist.none()),
+                        new AgentRoundResultExtractor(), ChildEnvAllowlist.none(), RoundScratchDirectory.HOST_TEMP),
                 new JudgeVerdictExtractor(),
                 new VerifyCheck.Judge('criteria.md', 'claude-fake-judge-1', [:], 1),
                 environment,
@@ -40,8 +39,9 @@ class JudgeRoundGuardProbeSpec extends Specification {
 
     private ExecHandle passingRound() {
         Stub(ExecHandle) {
-            output() >> new ByteArrayInputStream(PASSING_STREAM.getBytes(StandardCharsets.UTF_8))
+            output() >> CannedOutputs.written(PASSING_STREAM)
             waitForExitOrTimeout(_, _) >> new ExecHandle.Wait.Exited(Duration.ofSeconds(1))
+            postExitBound() >> Duration.ofSeconds(5)
         }
     }
 
