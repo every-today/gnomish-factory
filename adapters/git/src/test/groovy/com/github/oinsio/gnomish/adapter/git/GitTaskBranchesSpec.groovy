@@ -5,6 +5,7 @@ import com.github.oinsio.gnomish.app.port.TrackerWrite
 import com.github.oinsio.gnomish.app.port.git.BranchAdoption
 import com.github.oinsio.gnomish.app.port.git.BranchLocation
 import com.github.oinsio.gnomish.app.port.git.BranchStateResult
+import com.github.oinsio.gnomish.app.port.git.CloneRefFormatRefusedException
 import com.github.oinsio.gnomish.app.port.git.DeliveredBranchState
 import com.github.oinsio.gnomish.app.port.tracker.ClaimEpochSource
 import com.github.oinsio.gnomish.app.project.RegisteredClone
@@ -45,17 +46,30 @@ class GitTaskBranchesSpec extends Specification implements BareGitRepoFixture, T
         registeredClone = RegisteredCloneFixture.registered(tempDir.resolve('home'), cloneDir)
     }
 
-    def "harden delegates to FactoryCloneHardening — the clone's hooksPath is repointed"() {
+    // FR6 of own-git-invocation-policy: the port method is the ref-backend check alone — a
+    // reftable clone passes and its configuration is left byte-identical.
+    def "requireRefFormat delegates to FactoryCloneRefFormat — a reftable clone passes, its config untouched"() {
         given:
-        assert runner.run(cloneDir, 'config', '--get', 'core.hooksPath').exitCode() != 0
+        byte[] configBefore = Files.readAllBytes(cloneDir.resolve('.git/config'))
 
         when:
-        branches.harden(cloneDir)
+        branches.requireRefFormat(cloneDir)
 
         then:
-        def configured = Path.of(runner.run(cloneDir, 'config', '--get', 'core.hooksPath').stdout().forParsing().trim())
-        configured.fileName.toString() == FactoryCloneHardening.EMPTY_HOOKS_DIR
-        Files.isDirectory(configured)
+        noExceptionThrown()
+        Files.readAllBytes(cloneDir.resolve('.git/config')) == configBefore
+    }
+
+    def "requireRefFormat refuses a clone on the files backend"() {
+        given:
+        Path filesClone = tempDir.resolve('files-clone')
+        assert runner.run(tempDir, 'init', '-q', '--ref-format=files', filesClone.toString()).exitCode() == 0
+
+        when:
+        branches.requireRefFormat(filesClone)
+
+        then:
+        thrown(CloneRefFormatRefusedException)
     }
 
     def "ensureLocalTaskBranch delegates to ContainerResumeBranch — present locally is usable, absent everywhere is not"() {
@@ -72,7 +86,7 @@ class GitTaskBranchesSpec extends Specification implements BareGitRepoFixture, T
         given: 'a clone whose task branch exists only on origin'
         def bare = initBareRepo(tempDir, 'origin.git')
         seedTask('PROJ-2')
-        runner.run(cloneDir, 'remote', 'add', 'origin', bare.toString())
+        FixtureGitConfig.addRemote(cloneDir, 'origin', bare.toString())
         runner.run(cloneDir, 'push', 'origin', 'gnomish/PROJ-2')
         runner.run(cloneDir, 'checkout', '-q', 'main')
         // The seeded worktree holds the branch checked out, so `branch -D` would refuse: drop the ref itself.
@@ -177,7 +191,7 @@ class GitTaskBranchesSpec extends Specification implements BareGitRepoFixture, T
         def bare = initBareRepo(tempDir, 'push-origin.git')
         seedTask('PROJ-7')
         def worktree = worktreeFor('PROJ-7')
-        runner.run(worktree, 'remote', 'add', 'origin', bare.toString())
+        FixtureGitConfig.addRemote(worktree, 'origin', bare.toString())
 
         when:
         branches.pushClosingBestEffort(worktree, 'PROJ-7')
