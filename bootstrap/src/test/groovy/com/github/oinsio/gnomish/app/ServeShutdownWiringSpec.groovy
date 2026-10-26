@@ -110,7 +110,7 @@ class ServeShutdownWiringSpec extends Specification implements BareGitRepoFixtur
                 new TrustedBaseContext(BaseDefinition.none(), new DefaultBranch('main')))
         new TakeSlotRunner(
                 wiring, new RunOrder(cloneDir, null, pipeline(), false),
-                tracker, INSTANCE)
+                tracker, INSTANCE, DaemonConditionsFixture.closed())
     }
 
     /** A real, quick-to-drain automaton: the mocked tracker reports nothing eligible. */

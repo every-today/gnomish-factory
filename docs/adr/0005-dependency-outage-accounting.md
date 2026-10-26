@@ -2,7 +2,9 @@
 
 Status: accepted-and-implemented (2026-09-06, introduced by
 `add-base-ref-resolution`; implemented 2026-09-08; amended 2026-09-11 — the
-credential-failure split below)
+credential-failure split below; amended 2026-10-25 — the ledger line is the
+`daemonCondition` line of every condition, design D19 of
+`add-sandbox-base-image`)
 
 ## Context
 
@@ -174,7 +176,7 @@ doubling off `RestartBackoff`, capped at `factory.serve.remote-probe-interval-ca
 (default 10 minutes) — resets to the idle value only on the first
 *successful base refresh* after a close, never on the probe that closed the
 gate — a flapping remote that answers `ls-remote` but fails the fetch
-therefore meets a growing pause, not a restarted one. This is `RemoteOutageGate`
+therefore meets a growing pause, not a restarted one. This is the remote `DaemonCondition` (named `RemoteOutageGate` until `add-sandbox-base-image`)
 and its extracted `RemoteOutageProbeSchedule`: `openedFreshly()` arms a
 pending reset, `probeFailed()` re-arms the next interval off the *same*
 backoff instance so a gate that closes and reopens before a refresh ever
@@ -198,10 +200,15 @@ open past the sustained threshold additionally logs one ERROR
 outage. The serve snapshot carries a `remote` section beside `tracker`
 (`RemoteOutageHealth`: `target`, `open`, `openSince`, `lastError`,
 `nextProbeAt`, `consecutiveFailures`, `lastSuccessAt`); the ledger records
-one `remoteOutage` line per closed outage (`RemoteOutageClosedOutage`:
-`target`, `openedAt`, `closedAt`, `probeCount`, `releasedClaims`,
-`lastError`) and no task outcome for a released task, since nothing ran and
-nothing was spent.
+one `daemonCondition` line per closed episode (`RemoteOutageClosedOutage`,
+mapped by `LedgerJsonMapper`: `condition`, `target`, `openedAt`, `closedAt`,
+`probeCount`, `releasedClaims`, `lastError`) and no task outcome for a
+released task, since nothing ran and nothing was spent. *Amendment of
+2026-10-25:* the line was written as `remoteOutage` while the remote was the
+only gate; design D19 of `add-sandbox-base-image` made the gate one
+`DaemonCondition` of several, and the line is named `daemonCondition` with
+the condition in its `condition` field (`remote` for this ADR's outage);
+`LedgerAggregator` reads both spellings.
 
 Single-shot `take` never sees the gate at all: its own
 `InfrastructureUnavailable` result maps to exit code **16**
