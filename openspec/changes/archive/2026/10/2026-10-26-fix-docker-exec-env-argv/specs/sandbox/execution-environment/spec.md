@@ -69,8 +69,8 @@ The child environment of every `exec()` SHALL be composed of exactly three layer
 - **THEN** the docker process's command line shows the environment variable names and no value
 
 #### Scenario: An absent name stays unset in the box
-- **WHEN** a container exec's composed environment names a passthrough variable absent from the docker client's environment
-- **THEN** the variable is unset in the box, as it is when the name is absent from the factory environment, and no error is raised
+- **WHEN** a container exec runs with a passthrough variable absent from the factory's environment
+- **THEN** the variable is unset in the box and no error is raised
 
 ## ADDED Requirements
 
@@ -88,8 +88,12 @@ The container adapter SHALL produce the argv and the docker client environment o
 - **THEN** the docker client process for that exec observes the passthrough variable with its live value and does not observe the declared credential, while an unrelated variable of the factory's environment (such as the docker daemon address) is still present
 
 #### Scenario: Environment-free exec stays flag-free
-- **WHEN** the container file channel writes or reads a file, or the materializer creates the scratch directory
+- **WHEN** the container file channel writes or reads a file
 - **THEN** the exec argv contains no environment flag and the docker client's environment is the inherited environment minus declared credentials, with nothing laid on top
+
+#### Scenario: Scratch directory creation carries no environment flag
+- **WHEN** the materializer creates the scratch directory, a bounded management command
+- **THEN** its exec argv contains no environment flag, and its docker client environment is the management commands' inherited environment, unchanged by this requirement
 
 #### Scenario: The bare form is unconstructible
 - **WHEN** production code under the sandbox tree is scanned

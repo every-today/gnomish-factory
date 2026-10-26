@@ -1,5 +1,6 @@
 package com.github.oinsio.gnomish.sandbox
 
+import java.lang.reflect.Modifier
 import spock.lang.Specification
 
 /**
@@ -198,6 +199,50 @@ class ChildEnvAllowlistSpec extends Specification {
         def e = thrown(IllegalArgumentException)
         e.message.contains('NPM_TOKEN')
         !e.message.contains('TOOL')
+    }
+
+    // FR3 of fix-docker-exec-env-argv (design D2): the docker client's withheld set is read as
+    //     names only; NFR-S3, finding F107 of tighten-spec-contract: still no accessor for the
+    //     value source, so nothing reads a value around compose and resolve
+    def "FR3: credentialNames returns exactly the declared names, unmodifiable, and no accessor exposes the value source"() {
+        given:
+        def allowlist = ChildEnvAllowlist.of(['TOOL'], ['GITHUB_TOKEN', 'SONAR_TOKEN'],
+        valuesOf([GITHUB_TOKEN: 'g', SONAR_TOKEN: 's', NPM_TOKEN: 'n', TOOL: 't']))
+
+        when:
+        def names = allowlist.declaring(['NPM_TOKEN', 'GITHUB_TOKEN']).credentialNames()
+
+        then:
+        names == [
+            'GITHUB_TOKEN',
+            'SONAR_TOKEN',
+            'NPM_TOKEN'
+        ] as Set
+        allowlist.credentialNames() == ['GITHUB_TOKEN', 'SONAR_TOKEN'] as Set
+        ChildEnvAllowlist.none().credentialNames().isEmpty()
+
+        when:
+        names.add('OTHER')
+
+        then:
+        thrown(UnsupportedOperationException)
+
+        and:
+        def publicMethods = ChildEnvAllowlist.declaredMethods.findAll {
+            Modifier.isPublic(it.modifiers) && !it.synthetic
+        }
+        publicMethods*.name.toSet() == [
+            'of',
+            'none',
+            'declaring',
+            'compose',
+            'resolve',
+            'credentialNames'
+        ] as Set
+        publicMethods.every { !ChildEnvValues.isAssignableFrom(it.returnType) }
+        ChildEnvAllowlist.declaredFields.every {
+            !Modifier.isPublic(it.modifiers)
+        }
     }
 
     /** The factory's values over a plain map, read live at every lookup. */
